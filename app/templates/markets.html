@@ -1,0 +1,150 @@
+{% extends "base.html" %}
+{% block title %}시장 — Money Market Intelligence{% endblock %}
+{% block content %}
+  <div class="pagehead">
+    <h1>🏛️ 국내 시장</h1>
+    <div class="sub">KRX 공식 일별 표에서 자동 발견한 전 종목 · 지수·주식·ETF·채권·옵션·선물</div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">시장 폭</div>
+    <div class="card-sub">상승이 일부 대형주에 집중됐는지 시장 전반으로 확산됐는지 봅니다</div>
+    <div id="breadth"><div class="m">불러오는 중...</div></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">종목 검색</div>
+    <div class="card-sub">이름 또는 종목코드로 39,000여 개 종목·계약을 찾습니다</div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;">
+      <input id="q" placeholder="삼성전자, 005930, KODEX ..." style="flex:1;min-width:200px;
+        background:#0d1117;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:8px 10px;font-size:14px;">
+      <select id="dataset" style="background:#0d1117;border:1px solid #30363d;color:#e6edf3;
+        border-radius:6px;padding:8px 10px;font-size:13px;"><option value="">전체 표</option></select>
+      <button id="go" style="background:#1f6feb;color:#fff;border:none;border-radius:6px;
+        padding:8px 16px;cursor:pointer;font-size:13px;">검색</button>
+    </div>
+    <div class="scroll" id="results"><div class="m">검색어를 입력하세요.</div></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">보유 데이터셋</div>
+    <div class="card-sub">각 표에 실제로 쌓인 종목 수와 기간입니다. 표를 누르면 최근 시세를 봅니다</div>
+    <div class="scroll" id="datasets"><div class="m">불러오는 중...</div></div>
+  </div>
+
+  <div class="card" id="dailyCard" style="display:none;">
+    <div class="card-title" id="dailyTitle">표 시세</div>
+    <div class="card-sub" id="dailySub"></div>
+    <div class="scroll" id="daily"></div>
+  </div>
+
+<script>
+function esc(s) { return String(s ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+function num(v, d = 0) { return v == null ? '-' : Number(v).toLocaleString(undefined, { maximumFractionDigits: d }); }
+// Price movement keeps the domestic convention: a rise is red.
+function moveClass(v) { return v == null ? 'flat' : (v > 0 ? 'up' : (v < 0 ? 'down' : 'flat')); }
+
+fetch('/api/analysis/krx-breadth').then(r => r.json()).then(d => {
+  const cards = (d.markets || []).map(m => {
+    if (m.status !== 'ok') {
+      return '<div class="tile"><div class="k">' + esc(m.market) + '</div>'
+        + '<div class="v" style="font-size:14px;">미승인</div>'
+        + '<div class="m">' + esc(m.reason || '') + '</div></div>';
+    }
+    const h = m.history_20d || {};
+    return '<div class="tile"><div class="k">' + esc(m.market) + ' · ' + esc(m.as_of) + '</div>'
+      + '<div class="v"><span class="up">▲' + num(m.advances) + '</span> '
+      + '<span class="down">▼' + num(m.declines) + '</span></div>'
+      + '<div class="m">A/D ' + (m.advance_decline_ratio ?? '-')
+      + ' · 상승 비중 ' + (m.advance_share_pct ?? '-') + '%</div>'
+      + '<div class="m">거래대금 상승/하락 ' + (m.up_down_turnover_ratio ?? '-')
+      + ' · 상위10 시총 ' + (m.top10_market_cap_pct ?? '-') + '%</div>'
+      + '<div class="m">20일선 위 ' + (h.above_ma20_pct == null ? '집계 중' : h.above_ma20_pct + '%')
+      + ' · 신고가 ' + num(h.new_highs) + ' / 신저가 ' + num(h.new_lows) + '</div></div>';
+  }).join('');
+  document.getElementById('breadth').innerHTML = '<div class="tiles">' + cards + '</div>'
+    + '<div class="m" style="margin-top:10px;line-height:1.5;">' + esc(d.warning || '') + '</div>';
+});
+
+let datasetIndex = {};
+fetch('/api/market/datasets').then(r => r.json()).then(d => {
+  datasetIndex = Object.fromEntries(d.datasets.map(x => [x.dataset, x]));
+  const select = document.getElementById('dataset');
+  d.datasets.filter(x => x.rows > 0).forEach(x => {
+    const o = document.createElement('option');
+    o.value = x.dataset; o.textContent = x.label + ' (' + num(x.instruments) + ')';
+    select.appendChild(o);
+  });
+  let html = '<table><thead><tr><th>표</th><th>자산</th><th class="num">종목</th>'
+    + '<th class="num">행</th><th>기간</th></tr></thead><tbody>';
+  d.datasets.forEach(x => {
+    html += '<tr><td><a href="#" data-d="' + esc(x.dataset) + '" style="color:#58a6ff;text-decoration:none;">'
+      + esc(x.label) + '</a><div class="m">' + esc(x.dataset) + '</div></td>'
+      + '<td style="color:#8b949e;">' + esc(x.asset_type) + '</td>'
+      + '<td class="num">' + num(x.instruments) + '</td>'
+      + '<td class="num">' + num(x.rows) + '</td>'
+      + '<td style="color:#8b949e;font-size:12px;">' + esc(x.first_date || '-') + ' ~ ' + esc(x.latest_date || '-') + '</td></tr>';
+  });
+  document.getElementById('datasets').innerHTML = html + '</tbody></table>'
+    + '<div class="m" style="margin-top:8px;">범위 ' + esc(d.scope) + ' · 총 ' + d.count + '개 표</div>';
+  document.querySelectorAll('#datasets a[data-d]').forEach(a =>
+    a.onclick = e => { e.preventDefault(); loadDaily(a.dataset.d); });
+});
+
+function loadDaily(dataset) {
+  const meta = datasetIndex[dataset] || {};
+  document.getElementById('dailyCard').style.display = '';
+  document.getElementById('dailyTitle').textContent = (meta.label || dataset) + ' 최근 시세';
+  document.getElementById('dailySub').textContent =
+    '최신 거래일 상위 100건입니다. 표 전체는 API로 조회하세요.';
+  document.getElementById('daily').innerHTML = '<div class="m">불러오는 중...</div>';
+  fetch('/api/market/daily?source=krx&dataset=' + encodeURIComponent(dataset)
+        + '&date=' + encodeURIComponent(meta.latest_date || '') + '&limit=100')
+    .then(r => r.json()).then(d => {
+      if (!d.rows.length) { document.getElementById('daily').innerHTML = '<div class="m">행이 없습니다.</div>'; return; }
+      let html = '<table><thead><tr><th>종목</th><th class="num">종가</th><th class="num">등락</th>'
+        + '<th class="num">거래량</th><th class="num">거래대금</th></tr></thead><tbody>';
+      d.rows.forEach(r => {
+        html += '<tr><td>' + esc(r.name) + '<div class="m">' + esc(r.symbol) + '</div></td>'
+          + '<td class="num">' + num(r.close, 2) + '</td>'
+          + '<td class="num ' + moveClass(r.change_pct) + '">'
+          + (r.change_pct == null ? '-' : (r.change_pct > 0 ? '+' : '') + r.change_pct + '%') + '</td>'
+          + '<td class="num">' + num(r.volume) + '</td>'
+          + '<td class="num">' + num(r.turnover) + '</td></tr>';
+      });
+      document.getElementById('daily').innerHTML = html + '</tbody></table>';
+      document.getElementById('dailyCard').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    });
+}
+
+function search() {
+  const q = document.getElementById('q').value.trim();
+  const dataset = document.getElementById('dataset').value;
+  if (!q && !dataset) {
+    document.getElementById('results').innerHTML = '<div class="m">검색어 또는 표를 선택하세요.</div>';
+    return;
+  }
+  const params = new URLSearchParams({ source: 'krx', limit: '100' });
+  if (q) params.set('q', q);
+  if (dataset) params.set('dataset', dataset);
+  document.getElementById('results').innerHTML = '<div class="m">검색 중...</div>';
+  fetch('/api/market/universe?' + params).then(r => r.json()).then(d => {
+    if (!d.count) { document.getElementById('results').innerHTML = '<div class="m">결과가 없습니다.</div>'; return; }
+    let html = '<table><thead><tr><th>종목</th><th>코드</th><th>자산</th><th>시장</th><th>표</th></tr></thead><tbody>';
+    d.instruments.forEach(i => {
+      html += '<tr><td>' + esc(i.name) + '</td><td style="color:#8b949e;">' + esc(i.symbol) + '</td>'
+        + '<td style="color:#8b949e;">' + esc(i.asset_type) + '</td>'
+        + '<td style="color:#8b949e;">' + esc(i.market || '-') + '</td>'
+        + '<td><a href="#" data-d="' + esc(i.dataset) + '" style="color:#58a6ff;text-decoration:none;">'
+        + esc(i.dataset) + '</a></td></tr>';
+    });
+    document.getElementById('results').innerHTML = html + '</tbody></table>'
+      + '<div class="m" style="margin-top:8px;">' + d.count + '건 (상한 100)</div>';
+    document.querySelectorAll('#results a[data-d]').forEach(a =>
+      a.onclick = e => { e.preventDefault(); loadDaily(a.dataset.d); });
+  });
+}
+document.getElementById('go').onclick = search;
+document.getElementById('q').addEventListener('keydown', e => { if (e.key === 'Enter') search(); });
+</script>
+{% endblock %}

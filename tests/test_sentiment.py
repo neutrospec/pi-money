@@ -137,3 +137,70 @@ class GaugeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SnapshotReuseTests(unittest.TestCase):
+    """Two components read the same KRX snapshot; it must be read once.
+
+    Each full scan cost several hundred milliseconds against 195k rows, and
+    that table grows by ten million rows a year.
+    """
+
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.original_path = db.DB_PATH
+        db.DB_PATH = Path(self.tempdir.name) / "money-test.db"
+        db.init_db()
+
+    def tearDown(self):
+        db.DB_PATH = self.original_path
+        self.tempdir.cleanup()
+
+    def test_one_gauge_build_reads_the_breadth_snapshot_once(self):
+        from unittest.mock import patch
+
+        from app import market_metrics
+
+        with patch.object(
+            market_metrics, "krx_breadth_snapshot",
+            return_value={"as_of": None, "markets": []},
+        ) as snapshot:
+            sentiment.gauge()
+        self.assertEqual(1, snapshot.call_count)
+
+    def test_a_later_build_sees_fresh_data_rather_than_the_cache(self):
+        from unittest.mock import patch
+
+        from app import market_metrics
+
+        with patch.object(
+            market_metrics, "krx_breadth_snapshot",
+            return_value={"as_of": None, "markets": []},
+        ) as snapshot:
+            sentiment.gauge()
+            sentiment.gauge()
+        self.assertEqual(2, snapshot.call_count)
+
+    def test_strength_reads_the_snapshot_counts_rather_than_rescanning(self):
+        from unittest.mock import patch
+
+        from app import market_metrics
+
+        snapshot = {
+            "as_of": "2026-08-25",
+            "markets": [{
+                "status": "ok",
+                "up_turnover": 700.0, "down_turnover": 300.0,
+                "history_20d": {
+                    "eligible_issues": 900, "new_highs": 120, "new_lows": 30,
+                },
+            }],
+        }
+        with patch.object(
+            market_metrics, "krx_breadth_snapshot", return_value=snapshot
+        ):
+            report = sentiment.gauge()
+        scores = {item["key"]: item["score"] for item in report["components"]}
+        # 120 highs against 30 lows is 0.8 of the high/low total.
+        self.assertAlmostEqual(80.0, scores["strength"], places=1)
+        self.assertAlmostEqual(100.0, scores["breadth"], places=1)

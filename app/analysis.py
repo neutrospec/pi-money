@@ -31,6 +31,95 @@ def _latest_if_recent(points: list[dict] | None, max_age_days: int) -> dict | No
 # --------------------------------------------------------------------------
 # Yield curve
 # --------------------------------------------------------------------------
+# Tenors we hold for each sovereign curve, shortest first.  A curve is only
+# meaningful when its points share an observation date, so the builder aligns
+# on the newest date every requested tenor actually has.
+CURVE_TENORS = {
+    "kr": (
+        (1.0, "kr_treasury_1y", "1년"),
+        (2.0, "kr_treasury_2y", "2년"),
+        (3.0, "kr_treasury_3y", "3년"),
+        (5.0, "kr_treasury_5y", "5년"),
+        (10.0, "kr_treasury_10y", "10년"),
+        (30.0, "kr_treasury_30y", "30년"),
+    ),
+    "us": (
+        (0.25, "us_3m", "3개월"),
+        (1.0, "us_1y", "1년"),
+        (2.0, "us_2y", "2년"),
+        (5.0, "us_5y", "5년"),
+        (10.0, "us_10y", "10년"),
+        (30.0, "us_30y", "30년"),
+    ),
+}
+
+
+def yield_curve(series: dict[str, list[dict]], country: str) -> dict:
+    """Build an aligned sovereign curve plus a comparison a month earlier.
+
+    Mixing tenors observed on different days would draw a curve that never
+    existed, so every point comes from one date: the newest on which all
+    requested tenors reported.
+    """
+    tenors = CURVE_TENORS.get(country)
+    if not tenors:
+        return {"error": f"unknown curve: {country}"}
+    by_key = {
+        key: {point["date"]: point["value"] for point in series.get(key, [])}
+        for _, key, _ in tenors
+    }
+    available = [set(values) for values in by_key.values() if values]
+    if len(available) < 2:
+        return {"error": "not enough tenors collected for a curve"}
+    common = sorted(set.intersection(*available))
+    if not common:
+        return {"error": "tenors share no observation date"}
+    latest = common[-1]
+    # A month of trading days back, or the oldest date we can align on.
+    previous = common[max(0, len(common) - 22)] if len(common) > 1 else None
+
+    def read(day: str) -> list[dict]:
+        return [
+            {
+                "tenor_years": years,
+                "label": label,
+                "key": key,
+                "value": by_key[key][day],
+            }
+            for years, key, label in tenors if day in by_key[key]
+        ]
+
+    points = read(latest)
+    comparison = read(previous) if previous and previous != latest else []
+    spreads = {}
+    values = {item["key"]: item["value"] for item in points}
+    for name, long_key, short_key in (
+        ("10y_2y", f"{country}_treasury_10y", f"{country}_treasury_2y"),
+        ("10y_3y", f"{country}_treasury_10y", f"{country}_treasury_3y"),
+        ("30y_10y", f"{country}_treasury_30y", f"{country}_treasury_10y"),
+        ("us_10y_2y", "us_10y", "us_2y"),
+        ("us_30y_10y", "us_30y", "us_10y"),
+    ):
+        if long_key in values and short_key in values:
+            spreads[name] = round(values[long_key] - values[short_key], 3)
+    inverted = [
+        (points[index]["label"], points[index + 1]["label"])
+        for index in range(len(points) - 1)
+        if points[index + 1]["value"] < points[index]["value"]
+    ]
+    return {
+        "country": country,
+        "as_of": latest,
+        "compared_to": previous if comparison else None,
+        "points": points,
+        "comparison": comparison,
+        "spreads": spreads,
+        "inverted_segments": inverted,
+        "observations": len(common),
+        "method": "모든 만기가 함께 관측된 가장 최근 날짜로 정렬한 곡선입니다.",
+    }
+
+
 def term_spread(short: list[dict], long: list[dict]) -> dict | None:
     """Long-term minus short-term yield (e.g. 10y - 2y)."""
     if not short or not long:

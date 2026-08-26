@@ -131,6 +131,11 @@ def api_situation():
     return dashboard.situation()
 
 
+@app.get("/rates", response_class=HTMLResponse)
+def rates_page(request: Request):
+    return templates.TemplateResponse(request, "rates.html", {"active": "rates"})
+
+
 @app.get("/charts", response_class=HTMLResponse)
 def charts(request: Request):
     return templates.TemplateResponse(
@@ -149,6 +154,16 @@ def indices_page(request: Request):
     return templates.TemplateResponse(request, "indices.html", {"active": "indices"})
 
 
+@app.get("/markets", response_class=HTMLResponse)
+def markets_page(request: Request):
+    return templates.TemplateResponse(request, "markets.html", {"active": "markets"})
+
+
+@app.get("/analysis", response_class=HTMLResponse)
+def analysis_page(request: Request):
+    return templates.TemplateResponse(request, "analysis.html", {"active": "analysis"})
+
+
 @app.get("/correlation", response_class=HTMLResponse)
 def correlation_page(request: Request):
     return templates.TemplateResponse(request, "correlation.html", {"active": "correlation"})
@@ -157,6 +172,11 @@ def correlation_page(request: Request):
 @app.get("/spillover", response_class=HTMLResponse)
 def spillover_page(request: Request):
     return templates.TemplateResponse(request, "spillover.html", {"active": "spillover"})
+
+
+@app.get("/data", response_class=HTMLResponse)
+def data_page(request: Request):
+    return templates.TemplateResponse(request, "data.html", {"active": "data"})
 
 
 @app.get("/manage", response_class=HTMLResponse)
@@ -677,6 +697,23 @@ def api_yield_curve(country: str = Query(default="us", pattern="^(us|kr)$")):
         "warning": "금리차 역전만으로 경기침체를 확정하거나 시점을 예측할 수 없습니다.",
     })
     return result
+
+
+@app.get("/api/analysis/curve")
+def api_curve(country: str = Query(default="kr", pattern="^(us|kr)$")):
+    """Return an aligned sovereign yield curve with a one-month comparison."""
+    keys = [key for _, key, _ in analysis.CURVE_TENORS[country]]
+    result = analysis.yield_curve(
+        {key: db.get_indicator_points(key) for key in keys}, country
+    )
+    if result.get("error"):
+        raise HTTPException(status_code=503, detail=result["error"])
+    return {
+        **result,
+        "source": "ecos" if country == "kr" else "fred",
+        "cached": True,
+        "warning": "곡선 역전만으로 경기침체를 확정하거나 시점을 예측할 수 없습니다.",
+    }
 
 
 @app.get("/api/analysis/trend")

@@ -216,6 +216,11 @@ CREATE INDEX IF NOT EXISTS idx_market_daily_date
     ON market_daily(date);
 CREATE INDEX IF NOT EXISTS idx_market_daily_symbol_date
     ON market_daily(source, symbol, date DESC);
+-- Breadth and strength read one dataset at a time. Without `dataset` in the
+-- index every such read scans the whole source: 346ms against 195k rows,
+-- 40ms with it, and the table grows by ten million rows a year.
+CREATE INDEX IF NOT EXISTS idx_market_daily_dataset_symbol_date
+    ON market_daily(source, dataset, symbol, date DESC);
 CREATE INDEX IF NOT EXISTS idx_market_instruments_type
     ON market_instruments(source, asset_type, name);
 CREATE INDEX IF NOT EXISTS idx_recovery_ledger_status
@@ -1159,10 +1164,32 @@ def get_market_instruments(
     sql = "SELECT * FROM market_instruments"
     if clauses:
         sql += " WHERE " + " AND ".join(clauses)
-    sql += " ORDER BY source, dataset, name LIMIT ?"
+    # Rank by how closely the row answers the query, then by how central the
+    # instrument is. Ordering by dataset name put leveraged index products
+    # above the stock a search for "삼성전자" was obviously looking for.
+    if query:
+        sql += """ ORDER BY
+            CASE WHEN symbol = :exact THEN 0
+                 WHEN name = :exact THEN 1
+                 WHEN name LIKE :prefix THEN 2
+                 ELSE 3 END,
+            CASE asset_type
+                WHEN 'stock' THEN 0 WHEN 'etf' THEN 1 WHEN 'index' THEN 2
+                WHEN 'bond' THEN 3 WHEN 'etn' THEN 4 ELSE 5 END,
+            LENGTH(name), name"""
+    else:
+        sql += " ORDER BY source, dataset, name"
+    sql += " LIMIT ?"
     params.append(max(1, min(limit, 5000)))
     with get_conn() as conn:
-        rows = conn.execute(sql, params).fetchall()
+        if query:
+            # Positional and named parameters cannot mix, so the ranking terms
+            # are spliced in as positional too.
+            sql = sql.replace(":exact", "?").replace(":prefix", "?")
+            ordered = params[:-1] + [query, query, f"{query}%", params[-1]]
+            rows = conn.execute(sql, ordered).fetchall()
+        else:
+            rows = conn.execute(sql, params).fetchall()
     result = []
     for stored in rows:
         row = dict(stored)

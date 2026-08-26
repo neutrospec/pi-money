@@ -58,6 +58,11 @@
   .tile .m { color:#6e7681; font-size:10px; }
   .grouphead { font-size:12px; font-weight:700; color:#8b949e; letter-spacing:.5px;
                text-transform:uppercase; margin:18px 0 8px; }
+  .subnav { display:flex; gap:4px; margin-bottom:18px; flex-wrap:wrap; }
+  .subnav a { color:#8b949e; text-decoration:none; font-size:13px; padding:6px 12px;
+              border-radius:6px; background:#161b22; border:1px solid #21262d; }
+  .subnav a:hover { color:#e6edf3; background:#21262d; }
+  .subnav a.on { color:#e6edf3; background:#21262d; border-color:#388bfd; }
   @media (max-width:640px) {
     .main { padding:14px; }
     .topbar { padding:0 12px; gap:12px; }
@@ -69,18 +74,37 @@
 <body>
   <div class="topbar">
     <a class="brand" href="/">📊 Money<span>Intelligence</span></a>
+    {# Grouped by the question a person is asking, not by data type. Twelve
+       flat links made the bar itself the thing to read; seven with a subnav
+       keeps related screens together without hiding them. #}
     <nav class="nav">
       <a href="/" {% if active=='home' %}class="active"{% endif %}>상황판</a>
-      <a href="/calendar" {% if active=='calendar' %}class="active"{% endif %}>일정</a>
+      <a href="/rates" {% if active=='rates' %}class="active"{% endif %}>금리</a>
       <a href="/charts" {% if active=='charts' %}class="active"{% endif %}>지표</a>
-      <a href="/stocks" {% if active=='stocks' %}class="active"{% endif %}>주식</a>
-      <a href="/indices" {% if active=='indices' %}class="active"{% endif %}>지수</a>
-      <a href="/correlation" {% if active=='correlation' %}class="active"{% endif %}>상관관계</a>
-      <a href="/spillover" {% if active=='spillover' %}class="active"{% endif %}>전이효과</a>
-      <a href="/manage" {% if active=='manage' %}class="active"{% endif %}>관리</a>
+      <a href="/stocks" {% if active in ('stocks','indices') %}class="active"{% endif %}>시세</a>
+      <a href="/markets" {% if active=='markets' %}class="active"{% endif %}>시장</a>
+      <a href="/analysis" {% if active in ('analysis','correlation','spillover') %}class="active"{% endif %}>분석</a>
+      <a href="/data" {% if active in ('data','manage') %}class="active"{% endif %}>데이터</a>
+      <a href="/calendar" {% if active=='calendar' %}class="active"{% endif %}>일정</a>
     </nav>
   </div>
   <div class="main">
+    {% set groups = {
+      'stocks': [('/stocks','관심 종목','stocks'), ('/indices','글로벌 지수','indices')],
+      'indices': [('/stocks','관심 종목','stocks'), ('/indices','글로벌 지수','indices')],
+      'analysis': [('/analysis','지수 분석','analysis'), ('/correlation','상관관계','correlation'), ('/spillover','전이효과','spillover')],
+      'correlation': [('/analysis','지수 분석','analysis'), ('/correlation','상관관계','correlation'), ('/spillover','전이효과','spillover')],
+      'spillover': [('/analysis','지수 분석','analysis'), ('/correlation','상관관계','correlation'), ('/spillover','전이효과','spillover')],
+      'data': [('/data','품질 감사','data'), ('/manage','수집 상태','manage')],
+      'manage': [('/data','품질 감사','data'), ('/manage','수집 상태','manage')],
+    } %}
+    {% if active in groups %}
+    <div class="subnav">
+      {% for href, label, key in groups[active] %}
+      <a href="{{ href }}" {% if active==key %}class="on"{% endif %}>{{ label }}</a>
+      {% endfor %}
+    </div>
+    {% endif %}
     {% block content %}{% endblock %}
   </div>
   <div class="footer">출처: 공식 중앙은행·통계청·Yahoo Finance · 투자 참고용</div>
