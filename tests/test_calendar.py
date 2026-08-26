@@ -1102,3 +1102,72 @@ class ProjectSkillTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class KrxAggregateIsolationTests(TemporaryDatabaseTest):
+    """A derived summary must not invalidate the rows it was derived from."""
+
+    def _run_with_broken_aggregate(self):
+        from app import registry
+        from app.collectors import krx as krx_module
+
+        spec = next(
+            item for item in krx_module.DATASETS
+            if item["dataset"] == "opt_bydd_trd"
+        )
+        raw = [{
+            "BAS_DD": "20260825", "ISU_CD": "B01",
+            "ISU_NM": "코스피200 C (정규)", "PROD_NM": "코스피200 옵션",
+            "RGHT_TP_NM": "CALL", "TDD_CLSPRC": "1.0",
+            "ACC_TRDVOL": "10", "ACC_TRDVAL": "100", "ACC_OPNINT_QTY": "5",
+        }]
+        with patch.object(krx_module, "fetch_dataset", return_value=raw), \
+             patch.object(krx_module, "catchup_dates", return_value=["2026-08-25"]), \
+             patch.object(krx_module, "dataset_specs", return_value=[spec]), \
+             patch.object(
+                 registry.krx, "aggregate_put_call",
+                 side_effect=RuntimeError("summariser broke"),
+             ):
+            return registry._run_krx_market()
+
+    def test_a_failed_summary_leaves_the_day_recorded_as_collected(self):
+        db.init_db()
+        result = self._run_with_broken_aggregate()
+        # Marking the day an error would make the collector re-fetch rows it
+        # already holds and make the recovery ledger call it a gap.
+        self.assertEqual(
+            "success", db.market_run_status("krx", "opt_bydd_trd", "2026-08-25")
+        )
+        self.assertEqual(
+            1, len(db.get_market_daily(source="krx", dataset="opt_bydd_trd"))
+        )
+        self.assertTrue(
+            any(key.endswith("#aggregate") for key in result["errors"]),
+            result["errors"],
+        )
+
+    def test_a_working_summary_reports_no_error(self):
+        db.init_db()
+        from app import registry
+        from app.collectors import krx as krx_module
+
+        spec = next(
+            item for item in krx_module.DATASETS
+            if item["dataset"] == "opt_bydd_trd"
+        )
+        raw = [
+            {"BAS_DD": "20260825", "ISU_CD": "B01", "ISU_NM": "코스피200 C (정규)",
+             "PROD_NM": "코스피200 옵션", "RGHT_TP_NM": "CALL", "TDD_CLSPRC": "1.0",
+             "ACC_TRDVOL": "10", "ACC_TRDVAL": "100", "ACC_OPNINT_QTY": "5"},
+            {"BAS_DD": "20260825", "ISU_CD": "B02", "ISU_NM": "코스피200 P (정규)",
+             "PROD_NM": "코스피200 옵션", "RGHT_TP_NM": "PUT", "TDD_CLSPRC": "1.0",
+             "ACC_TRDVOL": "20", "ACC_TRDVAL": "200", "ACC_OPNINT_QTY": "10"},
+        ]
+        with patch.object(krx_module, "fetch_dataset", return_value=raw), \
+             patch.object(krx_module, "catchup_dates", return_value=["2026-08-25"]), \
+             patch.object(krx_module, "dataset_specs", return_value=[spec]):
+            result = registry._run_krx_market()
+        self.assertEqual({}, result["errors"])
+        self.assertEqual(
+            2.0, db.get_indicator_points("kr_put_call_volume")[-1]["value"]
+        )

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 from datetime import date, timedelta
 
@@ -10,6 +11,9 @@ from app import db, history_recovery
 from app.collectors import curated, indices, indicators, krx, quotes, watchlist
 from app.scheduler import make_collector
 from app.timeutil import instant_age_seconds, kst_today
+
+
+log = logging.getLogger("money")
 
 
 QUOTE_INTERVAL = int(os.environ.get("QUOTE_INTERVAL", "300"))
@@ -304,7 +308,6 @@ def _run_krx_market() -> dict:
                 rows = krx.normalize_rows(spec, raw_rows, day)
                 db.save_market_batch("krx", spec["dataset"], day, rows)
                 stored_rows += len(rows)
-                _store_krx_aggregates(spec, raw_rows, day)
             except Exception as exc:
                 message = str(exc)
                 db.record_market_run(
@@ -319,6 +322,12 @@ def _run_krx_market() -> dict:
                 dataset_ok = False
                 budget_exhausted = "run row budget exceeded" in message
                 break
+            # Derived series are a bonus on top of stored rows, so a
+            # summariser failure is reported without touching the day's
+            # recorded success. Running the error path here would make the
+            # collector re-fetch rows it already holds and make the recovery
+            # ledger call a stored day a gap.
+            _store_krx_aggregates(spec, raw_rows, day, errors, key)
         if dataset_ok:
             ok += 1
         if budget_exhausted:
@@ -336,24 +345,36 @@ def _run_krx_market() -> dict:
     }
 
 
-def _store_krx_aggregates(spec: dict, raw_rows: list[dict], day: str) -> None:
+def _store_krx_aggregates(
+    spec: dict,
+    raw_rows: list[dict],
+    day: str,
+    errors: dict[str, str] | None = None,
+    key: str | None = None,
+) -> None:
     """Persist market-wide statistics no individual row carries.
 
     These land in ``indicator_points`` rather than ``market_daily`` because a
     put/call ratio is a property of the market, not of an instrument.  The
-    contracts they are derived from are stored in full by the caller.
+    contracts they are derived from are stored in full by the caller, and a
+    failure here is reported without disowning them.
     """
     points = []
-    if spec.get("aggregate") == "put_call":
-        points = krx.aggregate_put_call(raw_rows, day)
-    elif spec.get("aggregate") == "named_index":
-        points = krx.extract_named_indices(raw_rows, day)
-    for point in points:
-        db.save_indicator_points(
-            point["indicator"],
-            [{"date": point["date"], "value": point["value"]}],
-            source="krx",
-        )
+    try:
+        if spec.get("aggregate") == "put_call":
+            points = krx.aggregate_put_call(raw_rows, day)
+        elif spec.get("aggregate") == "named_index":
+            points = krx.extract_named_indices(raw_rows, day)
+        for point in points:
+            db.save_indicator_points(
+                point["indicator"],
+                [{"date": point["date"], "value": point["value"]}],
+                source="krx",
+            )
+    except Exception as exc:  # the rows this was derived from remain valid
+        if errors is not None and key:
+            errors[f"{key}#aggregate"] = f"{type(exc).__name__}: {exc}"
+        log.warning("KRX aggregate failed for %s %s: %s", spec["dataset"], day, exc)
 
 
 def _event_version() -> str:

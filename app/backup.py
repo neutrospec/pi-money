@@ -90,6 +90,8 @@ def select_retained(backups: list[Backup]) -> list[Backup]:
     for item in backups[:KEEP_RECENT]:
         keep[item.path] = item
     for attribute, limit in (("week", KEEP_WEEKLY), ("month", KEEP_MONTHLY)):
+        if limit <= 0:
+            continue
         seen: set = set()
         for item in backups:
             period = getattr(item, attribute)
