@@ -256,12 +256,61 @@ class IndicatorTests(unittest.TestCase):
 
 
 class KrxTests(unittest.TestCase):
-    def test_balanced_scope_collects_whole_cash_market_without_specialist_bulk(self):
+    def test_balanced_scope_collects_the_cash_market_and_index_options(self):
         datasets = {item["dataset"] for item in krx.dataset_specs("balanced")}
         self.assertTrue({"kospi_dd_trd", "stk_bydd_trd", "ksq_bydd_trd", "etf_bydd_trd"} <= datasets)
+        # Index options joined the default scope because the put/call ratio is
+        # a sentiment input with no substitute elsewhere in the catalog.
+        self.assertIn("opt_bydd_trd", datasets)
+        # Single-stock options and warrants stay out: far thinner, and nothing
+        # in the analysis consumes them.
         self.assertNotIn("elw_bydd_trd", datasets)
-        self.assertNotIn("opt_bydd_trd", datasets)
+        self.assertNotIn("eqsop_bydd_trd", datasets)
         self.assertEqual(31, len(krx.dataset_specs("all")))
+
+    def test_only_the_option_table_is_tagged_for_aggregation(self):
+        tagged = {
+            item["dataset"] for item in krx.DATASETS if item.get("aggregate")
+        }
+        self.assertEqual({"opt_bydd_trd"}, tagged)
+
+    def test_put_call_ratio_uses_index_options_from_the_regular_session(self):
+        rows = [
+            # counted: KOSPI 200 index options, regular session
+            {"PROD_NM": "코스피200 옵션", "RGHT_TP_NM": "CALL", "ISU_NM": "코스피200 C (정규)",
+             "ACC_TRDVOL": "100", "ACC_TRDVAL": "1,000", "ACC_OPNINT_QTY": "50"},
+            {"PROD_NM": "코스피200 옵션", "RGHT_TP_NM": "PUT", "ISU_NM": "코스피200 P (정규)",
+             "ACC_TRDVOL": "150", "ACC_TRDVAL": "3,000", "ACC_OPNINT_QTY": "100"},
+            # excluded: overnight session would double-count one trading day
+            {"PROD_NM": "코스피200 옵션", "RGHT_TP_NM": "PUT", "ISU_NM": "코스피200 P (야간)",
+             "ACC_TRDVOL": "9999", "ACC_TRDVAL": "9999", "ACC_OPNINT_QTY": "9999"},
+            # excluded: KOSDAQ150 is a different underlying
+            {"PROD_NM": "코스닥150 옵션", "RGHT_TP_NM": "PUT", "ISU_NM": "코스닥150 P (정규)",
+             "ACC_TRDVOL": "5000", "ACC_TRDVAL": "5000", "ACC_OPNINT_QTY": "5000"},
+        ]
+        points = {p["indicator"]: p for p in krx.aggregate_put_call(rows, "2026-08-25")}
+        self.assertEqual(1.5, points["kr_put_call_volume"]["value"])
+        self.assertEqual(3.0, points["kr_put_call_value"]["value"])
+        self.assertEqual(2.0, points["kr_put_call_open_interest"]["value"])
+        self.assertEqual("2026-08-25", points["kr_put_call_volume"]["date"])
+
+    def test_aggregation_is_silent_when_no_calls_traded(self):
+        self.assertEqual([], krx.aggregate_put_call([], "2026-08-25"))
+
+    def test_option_rows_keep_their_right_and_implied_volatility(self):
+        spec = next(item for item in krx.DATASETS if item["dataset"] == "opt_bydd_trd")
+        row = krx.normalize_row(spec, {
+            "BAS_DD": "20260825", "ISU_CD": "B0169335",
+            "ISU_NM": "코스피200 C 202609 335.0 (정규)",
+            "PROD_NM": "코스피200 옵션", "RGHT_TP_NM": "CALL",
+            "TDD_CLSPRC": "1.23", "IMP_VOLT": "64.00",
+            "ACC_TRDVOL": "10", "ACC_OPNINT_QTY": "500",
+        }, "2026-08-25")
+        self.assertEqual("CALL", row["metadata"]["right"])
+        self.assertEqual(64.0, row["metadata"]["implied_volatility"])
+        self.assertEqual(500.0, row["metadata"]["open_interest"])
+        # The provider payload is still kept whole alongside the promotion.
+        self.assertEqual("코스피200 옵션", row["raw"]["PROD_NM"])
 
     def test_krx_row_is_normalized_and_keeps_provider_payload(self):
         spec = next(item for item in krx.DATASETS if item["dataset"] == "stk_bydd_trd")
@@ -931,8 +980,8 @@ class McpTests(TemporaryDatabaseTest):
             "market_indices", "market_indicator_list", "market_indicator",
             "market_universe", "market_correlation", "market_spillover",
             "market_yield_curve", "market_index_analysis", "market_technical",
-            "market_risk", "market_regime", "market_derived_metrics",
-            "market_breadth",
+            "market_risk", "market_regime", "market_sentiment",
+            "market_derived_metrics", "market_breadth",
         }, names)
         self.assertEqual("ok", mcp_server.market_health()["database_integrity"])
         self.assertIn("reconciliation", mcp_server.market_health())

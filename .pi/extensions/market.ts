@@ -82,6 +82,32 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
+	// 시장 심리 게이지
+	pi.registerTool({
+		name: "market_sentiment",
+		label: "시장 심리 지수",
+		description:
+			"우리가 수집한 입력만으로 계산한 한국 시장 위험선호 점수(0~100)와 구성요소별 점수를 조회한다. 구성요소가 서로 어긋나는 지점이 가장 유용하다. 매수·매도 신호가 아니다.",
+		parameters: Type.Object({}),
+		async execute() {
+			const d = await apiGet("/api/analysis/sentiment");
+			if (d.status !== "ok") {
+				return { content: [{ type: "text", text: `측정 불가: ${d.reason || "구성요소 부족"}` }], details: d };
+			}
+			const rows = (d.components || []).map(
+				(c: any) => `  ${c.label} ${c.score} — ${c.detail}`,
+			);
+			const waiting = (d.pending || []).map((p: any) => `  (대기) ${p.key}: ${p.reason}`);
+			const text =
+				`시장 심리 ${d.score} / 100 — ${d.band_label}\n` +
+				`구성요소 ${d.component_count}/${d.component_total} · 기준일 ${d.as_of}\n\n` +
+				`${rows.join("\n")}\n` +
+				(waiting.length ? `${waiting.join("\n")}\n` : "") +
+				`\n${d.warning}`;
+			return { content: [{ type: "text", text }], details: d };
+		},
+	});
+
 	// 수집 완전성 — 결측 관측치와 복구 가능성
 	pi.registerTool({
 		name: "market_coverage",

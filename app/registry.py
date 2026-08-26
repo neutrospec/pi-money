@@ -272,7 +272,7 @@ def _run_krx_market() -> dict:
     db.init_db()
     specs = krx.dataset_specs()
     days = krx.catchup_dates()
-    maximum = max(1, int(os.environ.get("KRX_MAX_ROWS_PER_RUN", "100000")))
+    maximum = max(1, int(os.environ.get("KRX_MAX_ROWS_PER_RUN", "400000")))
     stored_rows = 0
     ok = 0
     errors: dict[str, str] = {}
@@ -299,6 +299,7 @@ def _run_krx_market() -> dict:
                 rows = krx.normalize_rows(spec, raw_rows, day)
                 db.save_market_batch("krx", spec["dataset"], day, rows)
                 stored_rows += len(rows)
+                _store_krx_aggregates(spec, raw_rows, day)
             except Exception as exc:
                 message = str(exc)
                 db.record_market_run(
@@ -328,6 +329,23 @@ def _run_krx_market() -> dict:
         "rows": stored_rows,
         "scope": os.environ.get("KRX_MARKET_SCOPE", "balanced"),
     }
+
+
+def _store_krx_aggregates(spec: dict, raw_rows: list[dict], day: str) -> None:
+    """Persist market-wide statistics no individual row carries.
+
+    These land in ``indicator_points`` rather than ``market_daily`` because a
+    put/call ratio is a property of the market, not of an instrument.  The
+    contracts they are derived from are stored in full by the caller.
+    """
+    if spec.get("aggregate") != "put_call":
+        return
+    for point in krx.aggregate_put_call(raw_rows, day):
+        db.save_indicator_points(
+            point["indicator"],
+            [{"date": point["date"], "value": point["value"]}],
+            source="krx",
+        )
 
 
 def _event_version() -> str:

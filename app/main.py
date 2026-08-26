@@ -18,7 +18,7 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 from app import (
     analysis, correlation, coverage, dashboard, db, history_recovery,
-    market_metrics, registry, spillover,
+    market_metrics, registry, sentiment, spillover,
 )
 from app.collectors import indices, indicators, krx, watchlist
 from app.collectors.indicators import categories
@@ -738,6 +738,12 @@ def api_regime():
         "cached": True,
         "warning": "임계값 기반 참고 분류이며 현재 시장의 객관적 정답이 아닙니다.",
     }
+
+
+@app.get("/api/analysis/sentiment")
+def api_sentiment():
+    """Korean market sentiment gauge composed from this project's own inputs."""
+    return sentiment.gauge()
 
 
 @app.get("/api/analysis/derived")

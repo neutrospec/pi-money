@@ -35,7 +35,7 @@ INDEX_CALL_BUDGET = max(0, int(os.environ.get("HISTORY_INDEX_CALLS_PER_RUN", "3"
 KRX_CALL_BUDGET = max(0, int(os.environ.get("HISTORY_KRX_CALLS_PER_RUN", "3")))
 INDEX_YEARS = max(1, min(30, int(os.environ.get("HISTORY_INDEX_YEARS", "20"))))
 KRX_BUSINESS_DAYS = max(1, min(20, int(os.environ.get("HISTORY_KRX_BUSINESS_DAYS", "20"))))
-KRX_ROW_BUDGET = max(1, int(os.environ.get("HISTORY_KRX_MAX_ROWS_PER_RUN", "50000")))
+KRX_ROW_BUDGET = max(1, int(os.environ.get("HISTORY_KRX_MAX_ROWS_PER_RUN", "200000")))
 
 ACTIVE = {"pending", "retryable", "running"}
 TERMINAL = {"complete", "verified_empty", "blocked", "exhausted"}

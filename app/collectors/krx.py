@@ -20,13 +20,21 @@ from app.timeutil import kst_today
 BASE_URL = "https://data-dbg.krx.co.kr/svc/apis"
 
 
-def _spec(dataset: str, path: str, label: str, asset_type: str, tier: str) -> dict:
+def _spec(
+    dataset: str, path: str, label: str, asset_type: str, tier: str,
+    aggregate: str | None = None,
+) -> dict:
     return {
         "dataset": dataset,
         "path": path,
         "label": label,
         "asset_type": asset_type,
         "tier": tier,
+        # Some provider tables also yield a market-wide statistic that no
+        # single row carries.  The tag adds a summary alongside the rows; it
+        # never replaces them, because a contract we discard today cannot be
+        # reconstructed from an aggregate tomorrow.
+        "aggregate": aggregate,
     }
 
 
@@ -58,7 +66,12 @@ DATASETS = [
     _spec("fut_bydd_trd", "drv/fut_bydd_trd", "선물", "future", "all"),
     _spec("eqsfu_stk_bydd_trd", "drv/eqsfu_stk_bydd_trd", "유가 주식선물", "future", "all"),
     _spec("eqkfu_ksq_bydd_trd", "drv/eqkfu_ksq_bydd_trd", "코스닥 주식선물", "future", "all"),
-    _spec("opt_bydd_trd", "drv/opt_bydd_trd", "옵션", "option", "all"),
+    # Roughly 17,000 contracts a day, about a tenth of which trade.  Every
+    # row is kept — strike-level history is not recoverable after the fact and
+    # implied volatility surfaces need it — and the put/call ratios are
+    # derived alongside so the dashboard does not re-scan the table.
+    _spec("opt_bydd_trd", "drv/opt_bydd_trd", "옵션", "option", "balanced",
+          aggregate="put_call"),
     _spec("eqsop_bydd_trd", "drv/eqsop_bydd_trd", "유가 주식옵션", "option", "all"),
     _spec("eqkop_bydd_trd", "drv/eqkop_bydd_trd", "코스닥 주식옵션", "option", "all"),
     _spec("esg_etp_info", "esg/esg_etp_info", "ESG 증권상품", "esg_product", "all"),
@@ -142,7 +155,11 @@ def fetch_dataset(spec: dict, day: str) -> list[dict]:
     rows = payload.get("OutBlock_1") or []
     if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
         raise ValueError(f"KRX {spec['dataset']} returned an invalid row set")
-    maximum = max(1, int(os.environ.get("KRX_MAX_ROWS_PER_DATASET", "20000")))
+    # The option table alone returns ~18,000 contracts on a normal day and
+    # more when weeklies cluster, so the guard sits well above it. It exists
+    # to catch a provider returning something unexpected, not to ration
+    # normal collection.
+    maximum = max(1, int(os.environ.get("KRX_MAX_ROWS_PER_DATASET", "60000")))
     if len(rows) > maximum:
         raise RuntimeError(
             f"KRX {spec['dataset']} row budget exceeded: {len(rows)} > {maximum}"
@@ -225,10 +242,70 @@ def normalize_row(spec: dict, row: dict, requested_day: str) -> dict:
         "volume": _number(_first(row, "ACC_TRDVOL")),
         "turnover": _number(_first(row, "ACC_TRDVAL")),
         "market_cap": _number(_first(row, "MKTCAP")),
-        "metadata": {"provider_path": spec["path"], "dataset_label": spec["label"]},
+        "metadata": {
+            "provider_path": spec["path"],
+            "dataset_label": spec["label"],
+            # Option contracts carry identity the generic columns have no
+            # place for. Promoting it out of the raw blob makes strike-level
+            # queries possible without parsing JSON per row.
+            **({
+                "right": row["RGHT_TP_NM"],
+                "product": row.get("PROD_NM"),
+                "implied_volatility": _number(row.get("IMP_VOLT")),
+                "open_interest": _number(row.get("ACC_OPNINT_QTY")),
+            } if row.get("RGHT_TP_NM") else {}),
+        },
         "raw": row,
     }
 
 
 def normalize_rows(spec: dict, rows: list[dict], day: str) -> list[dict]:
     return [normalize_row(spec, row, day) for row in rows]
+
+
+# The put/call ratio is read off index options.  Individual stock options are
+# a different table and far too thin to carry a market-wide signal, and the
+# overnight session is excluded so the ratio describes one regular session.
+PUT_CALL_PRODUCTS = ("코스피200 옵션", "코스피200 위클리(목) 옵션", "코스피200 위클리(월) 옵션")
+
+
+def aggregate_put_call(rows: list[dict], day: str) -> list[dict]:
+    """Derive the day's put/call ratios from the stored option contracts.
+
+    Returns indicator points, not instruments: a put/call ratio describes the
+    market's positioning, not a tradable thing with its own price history.
+    The contracts themselves are stored separately and in full.
+    """
+    totals = {
+        "volume": {"CALL": 0.0, "PUT": 0.0},
+        "value": {"CALL": 0.0, "PUT": 0.0},
+        "open_interest": {"CALL": 0.0, "PUT": 0.0},
+    }
+    fields = {
+        "volume": "ACC_TRDVOL",
+        "value": "ACC_TRDVAL",
+        "open_interest": "ACC_OPNINT_QTY",
+    }
+    for row in rows:
+        if row.get("PROD_NM") not in PUT_CALL_PRODUCTS:
+            continue
+        if "야간" in str(row.get("ISU_NM", "")):
+            continue
+        side = str(row.get("RGHT_TP_NM", "")).upper()
+        if side not in ("CALL", "PUT"):
+            continue
+        for measure, field in fields.items():
+            value = _number(row.get(field))
+            if value:
+                totals[measure][side] += value
+    points = []
+    for measure, sides in totals.items():
+        calls, puts = sides["CALL"], sides["PUT"]
+        if calls <= 0:
+            continue
+        points.append({
+            "indicator": f"kr_put_call_{measure}",
+            "date": _iso_day(day),
+            "value": round(puts / calls, 6),
+        })
+    return points

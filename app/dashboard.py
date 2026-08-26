@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-from app import analysis, db, market_metrics
+from app import analysis, db, market_metrics, sentiment
 from app.collectors import indicators, indices
 from app.timeutil import kst_today, to_kst
 
@@ -262,6 +262,7 @@ def situation() -> dict:
     )
     return {
         "regime": regime,
+        "sentiment": sentiment.gauge(),
         "groups": headline_tiles(),
         "indices": headline_indices(),
         "risk": risk_panel(),

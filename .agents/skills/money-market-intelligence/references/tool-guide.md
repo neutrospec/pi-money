@@ -1,6 +1,6 @@
 # Tool guide
 
-MCP and pi expose the same 17 canonical capabilities. MCP reads SQLite
+MCP and pi expose the same 19 canonical capabilities. MCP reads SQLite
 directly; pi calls the matching cache-only REST endpoint. MCP reads SQLite directly; pi calls the matching cache-only REST endpoint.
 
 | Tool | Use it for | Important inputs |
@@ -8,6 +8,7 @@ directly; pi calls the matching cache-only REST endpoint. MCP reads SQLite direc
 | `market_health` | Database integrity, last collection, partial/error collectors, overall/core analysis coverage, completeness verdict | none |
 | `market_coverage` | Which observations are missing and whether the collector can still recover them | optional `key`: an indicator key or index symbol |
 | `market_situation` | The whole front-page state in one call: regime, core levels, derived risk, this week's high-impact releases, freshness | none |
+| `market_sentiment` | Korean risk-appetite score 0-100 with per-component detail and what could not be measured | none |
 | `market_events` | Upcoming official economic events in KST | `days` 1–365, optional ISO country code in MCP |
 | `market_quotes` | Curated watchlist's last collected quotes | optional category in MCP |
 | `market_indices` | Allowed global indices, symbols, latest observations | none |
@@ -32,6 +33,19 @@ directly; pi calls the matching cache-only REST endpoint. MCP reads SQLite direc
 - Correlation tools use exact display names such as `코스피` or `S&P 500`.
 - Index analysis tools use Yahoo symbols from `market_indices`, such as `^KS11` or `^GSPC`.
 - The KRX universe can contain multiple datasets for a symbol. Preserve `source`, `dataset`, and `asset_type` when identifying a row.
+
+## Reading the sentiment gauge
+
+The gauge is this project's own composite, not a vendor index. Its value is
+the disagreement between components, not the headline number:
+
+- Quote `components` individually when they diverge. Breadth reading greed
+  while credit reads fear means the rally has not been confirmed by the credit
+  market — that is the finding, and the average hides it.
+- `pending` lists components that could not be measured and why. A gauge
+  standing on four of seven components deserves a stated caveat.
+- Do not compare the score to CNN's Fear & Greed. Different inputs, different
+  thresholds, different market.
 
 ## Reading a coverage result
 

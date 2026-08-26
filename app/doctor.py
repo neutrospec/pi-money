@@ -96,6 +96,7 @@ def _probe_krx(key: str) -> tuple[list[tuple[str, str, bool]], str]:
 KRX_REQUIRED = {
     "stk_bydd_trd": "KOSPI 시장폭 (등락종목수·거래대금·쏠림)",
     "ksq_bydd_trd": "KOSDAQ 시장폭",
+    "opt_bydd_trd": "시장 심리 게이지의 풋/콜 비율",
 }
 KRX_USEFUL = {
     "etf_bydd_trd": "ETF 공식 종가 (Yahoo 대체)",

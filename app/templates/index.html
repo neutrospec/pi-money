@@ -3,6 +3,7 @@
 {% block content %}
   {% set r = situation.regime %}
   {% set f = situation.freshness %}
+  {% set g = situation.sentiment %}
   <div class="pagehead">
     <h1>🧭 시장 상황판</h1>
     <div class="sub">캐시된 관측치로 구성한 현재 상태 · {{ situation.as_of }} (KST) 기준</div>
@@ -25,6 +26,40 @@
       · 임계값 기반 참고 분류이며 투자 판단이 아닙니다.
     </div>
   </div>
+
+  {% if g.status == 'ok' %}
+  <div class="card">
+    <div class="card-title">시장 심리 지수</div>
+    <div class="card-sub">
+      우리가 수집한 입력만으로 계산합니다. 산식·임계값·제외 항목을 모두 공개하며,
+      이력이 부족한 구성요소는 추정하지 않고 뺍니다.
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:18px;align-items:center;">
+      <div id="sentimentGauge" style="width:260px;height:190px;flex:none;"></div>
+      <div style="flex:1;min-width:260px;">
+        {% for c in g.components %}
+        <div style="display:flex;align-items:center;gap:10px;padding:5px 0;">
+          <div style="width:104px;color:#8b949e;font-size:12px;">{{ c.label }}</div>
+          <div style="flex:1;height:6px;background:#21262d;border-radius:3px;overflow:hidden;">
+            {# One bar per component so a disagreement between them is visible
+               at a glance; the composite alone would hide it. #}
+            <div style="height:100%;width:{{ c.score }}%;background:
+              {%- if c.score < 45 %}#f0883e{% elif c.score > 55 %}#58a6ff{% else %}#8b949e{% endif %};"></div>
+          </div>
+          <div style="width:38px;text-align:right;font-size:12px;font-variant-numeric:tabular-nums;">{{ c.score }}</div>
+        </div>
+        <div style="color:#6e7681;font-size:10px;margin:0 0 6px 114px;line-height:1.4;">{{ c.detail }}</div>
+        {% endfor %}
+        {% for p in g.pending %}
+        <div style="color:#6e7681;font-size:11px;padding:3px 0 3px 114px;">⏳ {{ p.reason }}</div>
+        {% endfor %}
+      </div>
+    </div>
+    <div style="color:#6e7681;font-size:11px;margin-top:10px;line-height:1.5;">
+      구성요소 {{ g.component_count }}/{{ g.component_total }} · 기준일 {{ g.as_of }} · {{ g.warning }}
+    </div>
+  </div>
+  {% endif %}
 
   <div class="card">
     <div class="card-title">주요 지수</div>
@@ -121,4 +156,34 @@
       <a href="/manage" style="color:#58a6ff;margin-left:auto;">수집 상태 상세</a>
     </div>
   </div>
+
+{% if g.status == 'ok' %}
+<script>
+(function () {
+  const chart = echarts.init(document.getElementById('sentimentGauge'));
+  chart.setOption({
+    series: [{
+      type: 'gauge', min: 0, max: 100, splitNumber: 4,
+      startAngle: 210, endAngle: -30, radius: '96%', center: ['50%', '62%'],
+      // Orange reads as fear and blue as greed, matching the analysis axis
+      // used elsewhere. Red and green are reserved for price moves.
+      axisLine: { lineStyle: { width: 14, color: [
+        [0.25, '#f0883e'], [0.45, '#d98b4a'], [0.55, '#8b949e'],
+        [0.75, '#6ea8e0'], [1, '#58a6ff']] } },
+      pointer: { width: 4, length: '62%', itemStyle: { color: '#e6edf3' } },
+      axisTick: { show: false }, splitLine: { show: false },
+      axisLabel: { color: '#6e7681', fontSize: 9, distance: -20 },
+      detail: {
+        valueAnimation: false, offsetCenter: [0, '32%'],
+        fontSize: 26, fontWeight: 700, color: '#e6edf3',
+        formatter: v => v.toFixed(1)
+      },
+      title: { offsetCenter: [0, '68%'], color: '#8b949e', fontSize: 12 },
+      data: [{ value: {{ g.score }}, name: '{{ g.band_label }}' }]
+    }]
+  });
+  window.addEventListener('resize', () => chart.resize());
+})();
+</script>
+{% endif %}
 {% endblock %}

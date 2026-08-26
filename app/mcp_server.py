@@ -12,7 +12,8 @@ from mcp.server import MCPServer
 
 from app import (
     analysis, correlation, coverage, dashboard, db, history_recovery,
-    market_metrics, spillover as spillover_analysis,
+    market_metrics, sentiment as sentiment_gauge,
+    spillover as spillover_analysis,
 )
 from app.collectors import indices, indicators
 from app.timeutil import kst_today
@@ -389,6 +390,26 @@ def market_regime() -> dict:
         **result,
         "cached": True,
         "warning": "임계값 기반 참고 분류이며 현재 시장의 객관적 정답이 아닙니다.",
+    }
+
+
+@mcp.tool()
+def market_sentiment() -> dict:
+    """Score Korean risk appetite 0-100 from this project's own collected inputs.
+
+    Unlike a vendor sentiment index, every component, threshold, and omission
+    is stated: `components` lists what was measured and how, `pending` lists
+    what could not be and why.  Quote the component spread, not just the
+    headline — a composite hides the disagreement that matters.
+    """
+    report = sentiment_gauge.gauge()
+    return {
+        **report,
+        "guidance": (
+            "구성요소가 서로 어긋날 때가 가장 유용한 정보입니다. 예를 들어 "
+            "시장 폭은 탐욕인데 신용 수요가 공포라면 주가 상승이 신용시장의 "
+            "확인을 받지 못한 상태입니다. 합성 점수만 인용하지 마세요."
+        ),
     }
 
 
