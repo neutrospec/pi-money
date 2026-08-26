@@ -46,20 +46,31 @@ class Collector:
         if self.is_fresh is not None:
             try:
                 if self.is_fresh():
-                    previous = self.state or {}
-                    db.set_collector_state(
-                        self.name,
-                        status="fresh",
-                        ok=int(previous.get("ok") or 0),
-                        total=int(previous.get("total") or 0),
-                        duration_ms=previous.get("duration_ms"),
-                        details="freshness check passed; collection skipped",
-                    )
+                    self.mark_fresh("freshness check passed; collection skipped")
                     return False
             except Exception as exc:
                 # A broken freshness check must not suppress a needed run.
                 log.warning("freshness check %s failed: %s", self.name, exc)
         return True
+
+    def mark_fresh(self, reason: str) -> None:
+        """Record that an audit found nothing to repair.
+
+        Clearing the stored error matters: a collector that failed once and
+        has since recovered would otherwise keep reporting the old failure
+        until its next scheduled run, which is exactly when someone asking
+        "is collection healthy?" gets the wrong answer.
+        """
+        previous = self.state or {}
+        db.set_collector_state(
+            self.name,
+            status="fresh",
+            ok=int(previous.get("ok") or 0),
+            total=int(previous.get("total") or 0),
+            duration_ms=previous.get("duration_ms"),
+            error=None,
+            details=reason,
+        )
 
     def execute(
         self,
@@ -228,6 +239,7 @@ class Scheduler:
                     })
                     continue
                 if fresh:
+                    collector.mark_fresh("coverage audit passed; nothing to repair")
                     report.append({"name": collector.name, "action": "fresh"})
                     continue
                 delay = self._recovery_delay(collector)

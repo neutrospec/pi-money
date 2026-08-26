@@ -205,3 +205,71 @@ class AgentSurfaceTests(unittest.TestCase):
         ).read_text()
         for tool in anyio.run(mcp_server.mcp.list_tools):
             self.assertIn(f"`{tool.name}`", guide, tool.name)
+
+
+class CollectorStateFreshnessTests(unittest.TestCase):
+    """A recovered collector must stop reporting the failure it recovered from.
+
+    Otherwise the answer to "is collection healthy?" stays wrong until the
+    collector's next scheduled run, which for a daily job can be a full day.
+    """
+
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.original_path = db.DB_PATH
+        db.DB_PATH = Path(self.tempdir.name) / "money-test.db"
+        db.init_db()
+
+    def tearDown(self):
+        db.DB_PATH = self.original_path
+        self.tempdir.cleanup()
+
+    def _failed_then_healthy(self):
+        from app.scheduler import Collector, Scheduler
+
+        healthy = {"value": False}
+        collector = Collector(
+            name="probe",
+            interval=3600,
+            run=lambda: {"ok": 1, "total": 2, "errors": {"x": "boom"}},
+            is_fresh=lambda: healthy["value"],
+        )
+        collector.execute(trigger="schedule")
+        self.assertEqual("partial", db.get_collector_state("probe")["status"])
+        self.assertIsNotNone(db.get_collector_state("probe")["error"])
+        healthy["value"] = True
+        scheduler = Scheduler()
+        scheduler.register(collector)
+        return scheduler
+
+    def test_a_clean_audit_clears_the_previous_error(self):
+        scheduler = self._failed_then_healthy()
+        scheduler.reconcile()
+        state = db.get_collector_state("probe")
+        self.assertEqual("fresh", state["status"])
+        self.assertIsNone(state["error"])
+
+    def test_a_clean_cadence_check_also_clears_it(self):
+        import time
+
+        scheduler = self._failed_then_healthy()
+        collector = scheduler.collectors[0]
+        collector.due(time.time() + 7200)
+        state = db.get_collector_state("probe")
+        self.assertEqual("fresh", state["status"])
+        self.assertIsNone(state["error"])
+
+    def test_a_still_failing_collector_keeps_its_error(self):
+        from app.scheduler import Collector, Scheduler
+
+        collector = Collector(
+            name="broken",
+            interval=3600,
+            run=lambda: {"ok": 0, "total": 2, "errors": {"x": "boom"}},
+            is_fresh=lambda: False,
+        )
+        collector.execute(trigger="schedule")
+        scheduler = Scheduler(repair_backoff=0, error_backoff=0)
+        scheduler.register(collector)
+        scheduler.reconcile()
+        self.assertIsNotNone(db.get_collector_state("broken")["error"])
