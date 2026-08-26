@@ -305,3 +305,57 @@ class ProviderStallTests(unittest.TestCase):
         from app import dashboard
 
         self.assertIn("provider_stalled", dashboard.freshness())
+
+
+class SetupGuideTests(unittest.TestCase):
+    """Onboarding docs must not drift from what the code actually needs.
+
+    A setup guide that names a variable the code no longer reads, or omits
+    one it does, costs a newcomer more time than having no guide at all.
+    """
+
+    def test_the_template_declares_every_variable_the_code_requires(self):
+        template = Path(".env.example").read_text()
+        for variable in ("ECOS_API_KEY", "FRED_API_KEY", "KRX_API_KEY"):
+            self.assertIn(f"{variable}=", template, variable)
+
+    def test_the_template_ships_no_real_values(self):
+        import re
+
+        for line in Path(".env.example").read_text().splitlines():
+            stripped = line.strip()
+            if stripped.startswith("#") or not stripped:
+                continue
+            self.assertIsNotNone(
+                re.fullmatch(r"[A-Z0-9_]+=", stripped),
+                f"template line carries a value: {stripped}",
+            )
+
+    def test_the_setup_guide_names_the_krx_services_that_matter(self):
+        guide = Path("docs/sources/setup.md").read_text()
+        # These two are the whole point of the KRX section; the guide has to
+        # name them exactly, because the portal lists a similarly named index
+        # service that does not work for breadth.
+        self.assertIn("sto/stk_bydd_trd", guide)
+        self.assertIn("sto/ksq_bydd_trd", guide)
+        self.assertIn("idx/kospi_dd_trd", guide)  # the confusable one
+        self.assertIn("app.doctor", guide)
+
+    def test_the_doctor_checks_every_required_credential(self):
+        from app import doctor
+
+        source = Path("app/doctor.py").read_text()
+        for variable in ("ECOS_API_KEY", "FRED_API_KEY", "KRX_API_KEY"):
+            self.assertIn(variable, source, variable)
+        # The datasets the doctor calls required must exist in the collector.
+        from app.collectors import krx
+
+        known = {spec["dataset"] for spec in krx.dataset_specs()}
+        for dataset in doctor.KRX_REQUIRED:
+            self.assertIn(dataset, known, dataset)
+        for dataset in doctor.KRX_USEFUL:
+            self.assertIn(dataset, known, dataset)
+
+    def test_entry_points_link_to_the_setup_guide(self):
+        for path in ("README.md", "docs/README.md", "docs/sources/README.md"):
+            self.assertIn("setup.md", Path(path).read_text(), path)

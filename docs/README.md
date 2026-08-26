@@ -10,6 +10,7 @@
 | [`architecture/README.md`](architecture/README.md) | 수집·저장·웹·에이전트 데이터 흐름 |
 | [`architecture/operations.md`](architecture/operations.md) | 실행, 백업, 장애 확인, 외부 노출 원칙 |
 | [`agent.md`](agent.md) | 표준 MCP 및 pi 연동 |
+| [`sources/setup.md`](sources/setup.md) | **처음 설정** — 키 발급, KRX 신청 항목, 점검 (약 10분) |
 | [`sources/README.md`](sources/README.md) | 무료 데이터 소스와 인증·한계 |
 | [`plan/README.md`](plan/README.md) | M0~M7 계획과 실제 상태 |
 | [`plan/historical-recovery.md`](plan/historical-recovery.md) | 1차 최신성·2차 과거 완전성 방어와 유한 종료 조건 |
@@ -24,11 +25,12 @@
 
 ```bash
 uv sync
+cp .env.example .env              # ECOS·FRED 키 입력
+uv run python -m app.doctor       # 키가 실제로 동작하는지 점검
 uv run uvicorn app.main:app --host 127.0.0.1 --port 8077
-uv run python -m unittest -v
 ```
 
-운영 전에는 `.env.example`을 `.env`로 복사하고 ECOS·FRED 키를 입력합니다. API 키는 소스코드나 문서에 기록하지 않습니다.
+키 발급 절차와 KRX 서비스 신청 항목은 [`sources/setup.md`](sources/setup.md)에 단계별로 있습니다. API 키는 소스코드나 문서에 기록하지 않습니다.
 
 ## 핵심 원칙
 

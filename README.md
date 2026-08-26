@@ -5,10 +5,13 @@
 ## 빠른 시작
 
 ```bash
-cp .env.example .env              # 키 값 입력, 커밋 금지
 uv sync
+cp .env.example .env              # 키 값 입력, 커밋 금지
+uv run python -m app.doctor       # 키 동작·KRX 승인 현황 점검
 uv run uvicorn app.main:app --host 127.0.0.1 --port 8077
 ```
+
+키 발급 절차와 KRX 서비스 신청 항목은 [docs/sources/setup.md](docs/sources/setup.md)에 있습니다. 필수는 ECOS·FRED 두 개뿐이고 약 10분이면 끝납니다.
 
 수동 수집과 검증:
 
