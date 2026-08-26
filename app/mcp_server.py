@@ -6,6 +6,7 @@ an agent can distinguish cached evidence from a live quote or a causal claim.
 """
 from __future__ import annotations
 
+import os
 from datetime import timedelta
 
 from mcp.server import MCPServer
@@ -493,6 +494,81 @@ def market_risk(symbol: str, years: int = 2) -> dict:
             "VaR는 과거 수익률 분위수이며 최대 예상 손실이 아닙니다. "
             "샤프 비율과 낙폭도 표본 기간에 민감합니다."
         ),
+    }
+
+
+@mcp.tool()
+def market_daily(
+    dataset: str,
+    symbol: str | None = None,
+    day: str | None = None,
+    limit: int = 50,
+) -> dict:
+    """Read cached KRX daily rows for one dataset: options, futures, ETFs, bonds.
+
+    `market_universe` finds instruments; this returns their prices.  A dataset
+    is required because the tables are large — the option table alone holds
+    ~18,000 contracts per session — so an unfiltered read would be neither
+    useful nor affordable.  Narrow with `symbol` or `day` when you can.
+    """
+    from app.collectors import krx
+
+    known = {spec["dataset"]: spec for spec in krx.dataset_specs()}
+    if dataset not in known:
+        return {
+            "error": f"unknown dataset: {dataset}",
+            "available": sorted(known),
+            "hint": "market_universe lists instruments and the dataset each belongs to",
+        }
+    if not 1 <= limit <= 500:
+        return {"error": "limit must be between 1 and 500"}
+    rows = db.get_market_daily(
+        source="krx", dataset=dataset, symbol=symbol, day=day, limit=limit
+    )
+    # The provider payload is kept per row but is far too verbose to return.
+    trimmed = [
+        {key: value for key, value in row.items() if key != "raw"} for row in rows
+    ]
+    return {
+        "dataset": dataset,
+        "label": known[dataset]["label"],
+        "asset_type": known[dataset]["asset_type"],
+        "count": len(trimmed),
+        "rows": trimmed,
+        "filters": {"symbol": symbol, "date": day, "limit": limit},
+        "note": (
+            "raw 공급자 payload는 응답에서 제외했습니다. 옵션·선물 행은 "
+            "metadata에 콜/풋 구분·내재변동성·미결제약정을 담고 있습니다."
+        ),
+        "cached": True,
+    }
+
+
+@mcp.tool()
+def market_datasets() -> dict:
+    """List the KRX daily tables held in cache, with how much of each is stored."""
+    from app.collectors import krx
+
+    overview = {
+        row["dataset"]: row for row in db.get_market_dataset_summary("krx")
+    }
+    items = []
+    for spec in krx.dataset_specs():
+        stored = overview.get(spec["dataset"], {})
+        items.append({
+            "dataset": spec["dataset"],
+            "label": spec["label"],
+            "asset_type": spec["asset_type"],
+            "instruments": stored.get("instruments", 0),
+            "rows": stored.get("rows", 0),
+            "first_date": stored.get("first_date"),
+            "latest_date": stored.get("latest_date"),
+        })
+    return {
+        "count": len(items),
+        "datasets": sorted(items, key=lambda item: -item["rows"]),
+        "scope": os.environ.get("KRX_MARKET_SCOPE", "balanced"),
+        "cached": True,
     }
 
 

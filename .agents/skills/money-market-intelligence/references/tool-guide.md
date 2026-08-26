@@ -1,6 +1,6 @@
 # Tool guide
 
-MCP and pi expose the same 19 canonical capabilities. MCP reads SQLite
+MCP and pi expose the same 21 canonical capabilities. MCP reads SQLite
 directly; pi calls the matching cache-only REST endpoint. MCP reads SQLite directly; pi calls the matching cache-only REST endpoint.
 
 | Tool | Use it for | Important inputs |
@@ -15,6 +15,8 @@ directly; pi calls the matching cache-only REST endpoint. MCP reads SQLite direc
 | `market_indicator_list` | Discover indicator keys, analysis group, core priority, proxy/source metadata, and latest/retrieval dates | optional exact category |
 | `market_indicator` | One indicator's cached time series | exact `key`; MCP `limit` 1–1000 |
 | `market_universe` | Search provider-discovered KRX instruments and datasets | `query`, `source`, `dataset`, `asset_type`, `limit` |
+| `market_datasets` | Which KRX daily tables are cached, and how much of each | none |
+| `market_daily` | Cached daily rows for one KRX table: options, futures, ETFs, bonds | `dataset` required; `symbol`, `date`, `limit` 1-500 |
 | `market_correlation` | Rolling and lead-lag correlation of two allowed indices | exact display names `a`, `b`; `window` 20–252; `max_lag` 0–20 |
 | `market_spillover` | Generalized-FEVD connectedness across cached indices | optional exact `region`; `maxlags` 1–10; `horizon` 1–50 |
 | `market_yield_curve` | Aligned US or Korean term spread | `country`: `us` or `kr` |
@@ -33,6 +35,23 @@ directly; pi calls the matching cache-only REST endpoint. MCP reads SQLite direc
 - Correlation tools use exact display names such as `코스피` or `S&P 500`.
 - Index analysis tools use Yahoo symbols from `market_indices`, such as `^KS11` or `^GSPC`.
 - The KRX universe can contain multiple datasets for a symbol. Preserve `source`, `dataset`, and `asset_type` when identifying a row.
+
+## Reaching the KRX tables
+
+Three tools, narrowing in order:
+
+1. `market_datasets` — what tables exist in cache and how much of each. Start
+   here when you do not know the dataset name.
+2. `market_universe` — find an instrument by name or code across tables.
+3. `market_daily` — read prices for one table. `dataset` is required because
+   the option table alone holds ~18,000 contracts per session; an unfiltered
+   read is neither useful nor affordable. Narrow with `symbol` or `date`.
+
+Option and futures rows carry `metadata.right` (CALL/PUT),
+`metadata.implied_volatility`, and `metadata.open_interest`. The market-wide
+put/call ratios derived from them are indicator series
+(`kr_put_call_volume`, `_value`, `_open_interest`) reachable through
+`market_indicator` — prefer those over re-aggregating the contract table.
 
 ## Reading the sentiment gauge
 

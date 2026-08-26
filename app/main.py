@@ -352,6 +352,30 @@ def api_market_universe(
     }
 
 
+@app.get("/api/market/datasets")
+def api_market_datasets():
+    """List cached KRX daily tables and how much of each is stored."""
+    stored = {row["dataset"]: row for row in db.get_market_dataset_summary("krx")}
+    items = []
+    for spec in krx.dataset_specs():
+        row = stored.get(spec["dataset"], {})
+        items.append({
+            "dataset": spec["dataset"],
+            "label": spec["label"],
+            "asset_type": spec["asset_type"],
+            "instruments": row.get("instruments", 0),
+            "rows": row.get("rows", 0),
+            "first_date": row.get("first_date"),
+            "latest_date": row.get("latest_date"),
+        })
+    return {
+        "count": len(items),
+        "datasets": sorted(items, key=lambda item: -item["rows"]),
+        "scope": os.environ.get("KRX_MARKET_SCOPE", "balanced"),
+        "cached": True,
+    }
+
+
 @app.get("/api/market/daily")
 def api_market_daily(
     source: str | None = Query(default=None, max_length=20),

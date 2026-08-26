@@ -51,7 +51,7 @@ def _indicator_deficits(cycles: set[str]) -> list[str]:
     today = kst_today()
     for key in indicators.catalog():
         cycle = indicators.cycle_of(key)
-        if cycle not in cycles:
+        if cycle not in cycles or indicators.is_collector_fed(key):
             continue
         points = db.get_indicator_points(key)
         if not points:
@@ -83,7 +83,12 @@ def _run_indicator_keys(keys: list[str]) -> dict:
 
 
 def _run_indicators(cycles: set[str]) -> dict:
-    keys = [key for key in indicators.catalog() if indicators.cycle_of(key) in cycles]
+    # Series another collector writes are catalogued for discovery but cannot
+    # be fetched one key at a time; requesting them here would fail every run.
+    keys = [
+        key for key in indicators.catalog()
+        if indicators.cycle_of(key) in cycles and not indicators.is_collector_fed(key)
+    ]
     return _run_indicator_keys(keys)
 
 
@@ -338,9 +343,12 @@ def _store_krx_aggregates(spec: dict, raw_rows: list[dict], day: str) -> None:
     put/call ratio is a property of the market, not of an instrument.  The
     contracts they are derived from are stored in full by the caller.
     """
-    if spec.get("aggregate") != "put_call":
-        return
-    for point in krx.aggregate_put_call(raw_rows, day):
+    points = []
+    if spec.get("aggregate") == "put_call":
+        points = krx.aggregate_put_call(raw_rows, day)
+    elif spec.get("aggregate") == "named_index":
+        points = krx.extract_named_indices(raw_rows, day)
+    for point in points:
         db.save_indicator_points(
             point["indicator"],
             [{"date": point["date"], "value": point["value"]}],

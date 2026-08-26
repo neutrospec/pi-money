@@ -360,6 +360,10 @@ CATEGORY_ANALYSIS_GROUP = {
 }
 
 KEY_ANALYSIS_GROUP = {
+    "kr_put_call_volume": "positioning",
+    "kr_put_call_value": "positioning",
+    "kr_put_call_open_interest": "positioning",
+    "kr_vkospi": "volatility",
     "kr_kospi_per": "valuation",
     "kr_kospi_dividend_yield": "valuation",
     "kr_semiconductor_export_value": "trade_semiconductors",
@@ -415,6 +419,8 @@ def _source_url(source: str, series: str) -> str:
         return f"https://fred.stlouisfed.org/series/{series}"
     if source in {"ecos", "ecos_raw"}:
         return "https://ecos.bok.or.kr/"
+    if source == "krx":
+        return "https://openapi.krx.co.kr/"
     if source == "ecb":
         return f"https://data.ecb.europa.eu/data/datasets/{series.split('/')[0]}"
     if source == "boe":
@@ -434,6 +440,8 @@ def _source_frequency(source: str, series: str) -> str:
         except KeyError as exc:
             raise ValueError(f"FRED frequency is not declared: {series}") from exc
     if source == "yahoo":
+        return "D"
+    if source == "krx":
         return "D"
     if source == "ecos_raw":
         stat_code = series.split("/", 1)[0]
@@ -648,6 +656,13 @@ def catalog() -> dict:
         # ===== 기타 신흥국 =====
         "usd_brl": ("브라질 헤알/달러", "헤알", "환율", "fred", "DEXBZUS", []),
         "usd_gbp": ("파운드/달러", "파운드", "환율", "fred", "DEXUSUK", []),
+        # ===== KRX 파생 (krx_market 수집기가 채웁니다) =====
+        # 지수옵션 풋/콜은 시장 포지셔닝이지 종목이 아니므로 계약 테이블이
+        # 아니라 지표 계열로 둡니다.
+        "kr_put_call_volume": ("코스피200 옵션 풋/콜 (거래량)", "배", "심리", "krx", "opt_bydd_trd/volume", []),
+        "kr_put_call_value": ("코스피200 옵션 풋/콜 (거래대금)", "배", "심리", "krx", "opt_bydd_trd/value", []),
+        "kr_put_call_open_interest": ("코스피200 옵션 풋/콜 (미결제)", "배", "심리", "krx", "opt_bydd_trd/open_interest", []),
+        "kr_vkospi": ("코스피200 변동성지수 (VKOSPI)", "지수", "심리", "krx", "drvprod_dd_trd/코스피 200 변동성지수", []),
         # ===== 상품 (Yahoo) =====
         "gold": ("국제 금 (선물)", "달러", "상품", "yahoo", "GC=F", []),
         "silver": ("국제 은 (선물)", "달러", "상품", "yahoo", "SI=F", []),
@@ -685,6 +700,19 @@ def catalog() -> dict:
         )
         out[key]["date_kind"] = date_kind_of(src, series, out[key]["frequency"])
     return out
+
+
+# Some series are produced by a collector that fetches a different thing —
+# the put/call ratio falls out of the KRX option table, VKOSPI is one row of
+# the derivative index table.  They belong in the catalog so agents can
+# discover them and the coverage audit can see them, but they must not be
+# fetched one key at a time like a provider series.
+COLLECTOR_FED_SOURCES = {"krx"}
+
+
+def is_collector_fed(key: str) -> bool:
+    """True when another collector writes this series, not a direct fetch."""
+    return catalog()[key]["source"] in COLLECTOR_FED_SOURCES
 
 
 def date_kind_of(source: str, series: str, frequency: str) -> str:

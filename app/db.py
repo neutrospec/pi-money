@@ -1094,6 +1094,22 @@ def save_market_batch(
         )
 
 
+def get_market_dataset_summary(source: str) -> list[dict]:
+    """Per-dataset row and instrument counts with the span actually held."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            """SELECT dataset,
+                      COUNT(*) AS rows,
+                      COUNT(DISTINCT symbol) AS instruments,
+                      MIN(date) AS first_date,
+                      MAX(date) AS latest_date
+               FROM market_daily WHERE source=?
+               GROUP BY dataset""",
+            (source,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def market_overview(source: str | None = None) -> dict:
     where = " WHERE source=?" if source else ""
     params = [source] if source else []

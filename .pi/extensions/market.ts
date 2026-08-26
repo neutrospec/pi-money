@@ -82,6 +82,55 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
+	// KRX 데이터셋 목록
+	pi.registerTool({
+		name: "market_datasets",
+		label: "KRX 데이터셋",
+		description:
+			"캐시에 보유한 KRX 일별 표 목록과 각 표의 종목 수·행 수·보유 기간을 조회한다. market_daily 로 내려가기 전에 어떤 표가 있는지 확인할 때 쓴다.",
+		parameters: Type.Object({}),
+		async execute() {
+			const d = await apiGet("/api/market/datasets");
+			const lines = d.datasets.map(
+				(x: any) =>
+					`  ${x.dataset} (${x.label}) — ${x.instruments.toLocaleString()}종목 ${x.rows.toLocaleString()}행 ${x.first_date || "-"}~${x.latest_date || "-"}`,
+			);
+			return {
+				content: [{ type: "text", text: `KRX 데이터셋 ${d.count}개 (범위 ${d.scope})\n${lines.join("\n")}` }],
+				details: d,
+			};
+		},
+	});
+
+	// KRX 일별시세 (옵션·선물·ETF·채권 등)
+	pi.registerTool({
+		name: "market_daily",
+		label: "KRX 일별시세",
+		description:
+			"KRX 일별 표 한 개의 캐시된 시세 행을 조회한다. 표가 크므로 dataset 지정이 필수이고, 가능하면 symbol 또는 date 로 좁힌다.",
+		parameters: Type.Object({
+			dataset: Type.String({ maxLength: 40, description: "예: opt_bydd_trd, stk_bydd_trd" }),
+			symbol: Type.Optional(Type.String({ maxLength: 40 })),
+			date: Type.Optional(Type.String({ maxLength: 10, description: "YYYY-MM-DD" })),
+			limit: Type.Optional(Type.Number({ minimum: 1, maximum: 500 })),
+		}),
+		async execute(_id, params) {
+			const query = new URLSearchParams({ source: "krx", dataset: params.dataset });
+			if (params.symbol) query.set("symbol", params.symbol);
+			if (params.date) query.set("date", params.date);
+			query.set("limit", String(params.limit ?? 50));
+			const d = await apiGet(`/api/market/daily?${query}`);
+			const lines = d.rows.map(
+				(r: any) =>
+					`  ${r.date} ${r.symbol} ${r.name}: ${r.close ?? "-"}${r.change_pct != null ? ` (${r.change_pct}%)` : ""}`,
+			);
+			return {
+				content: [{ type: "text", text: `${params.dataset} ${d.count}행\n${lines.join("\n")}` }],
+				details: d,
+			};
+		},
+	});
+
 	// 시장 심리 게이지
 	pi.registerTool({
 		name: "market_sentiment",

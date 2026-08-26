@@ -145,26 +145,22 @@ def _breadth() -> dict | None:
 
 
 def _volatility() -> dict | None:
-    """VKOSPI against its own recent level, not an absolute threshold."""
-    rows = db.get_market_daily(
-        source="krx", dataset="drvprod_dd_trd", limit=5000
-    )
-    series = sorted(
-        (
-            (row["date"], row["close"]) for row in rows
-            if row["name"] == "코스피 200 변동성지수" and row["close"] is not None
-        ),
-        key=lambda item: item[0],
-    )
-    if len(series) < MIN_HISTORY["volatility"]:
+    """VKOSPI against its own recent level, not an absolute threshold.
+
+    The KRX collector lifts VKOSPI out of the 320-row derivative index table
+    into its own series, so this reads a named indicator rather than scanning
+    a bulk table for a row matched by name.
+    """
+    points = _series("kr_vkospi")
+    if len(points) < MIN_HISTORY["volatility"]:
         return None
-    values = [value for _, value in series]
+    values = [point["value"] for point in points]
     return {
         "key": "volatility",
         "label": "변동성 (VKOSPI)",
         "score": _percentile_score(values[-1], values[-250:], invert=True),
         "detail": f"VKOSPI {values[-1]:.2f}",
-        "as_of": series[-1][0],
+        "as_of": points[-1]["date"],
         "method": "최근 250거래일 분포상 백분위, 높을수록 공포",
     }
 

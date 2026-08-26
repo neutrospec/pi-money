@@ -26,6 +26,7 @@ See [references/tool-guide.md](references/tool-guide.md) for the canonical tool 
    - Use `market_indicator_list` before `market_indicator` when the indicator key is uncertain.
    - Use `market_indices` to find an allowed index symbol or exact display name.
    - Use `market_universe` for provider-discovered KRX instruments; this is broader than the quote watchlist.
+   - Use `market_datasets` before `market_daily` when the KRX table name is uncertain. `market_daily` needs an explicit dataset because the option table alone holds ~18,000 contracts per session.
 3. For "what is going on right now", call `market_situation` once instead of assembling the same picture from a dozen single-series calls. It returns the regime verdict, core policy/funding/risk levels, derived spreads and liquidity, this week's high-impact releases, and a freshness line — each with its own observation date.
 4. For risk appetite specifically, `market_sentiment` scores it 0-100 from collected inputs and shows each component. Report where components disagree rather than only the composite.
 5. Call the narrowest tool that answers the question. Do not combine every analysis by default.
@@ -50,6 +51,7 @@ See [references/tool-guide.md](references/tool-guide.md) for the canonical tool 
 - `us_rate` is the monthly effective federal funds rate, not the FOMC target range.
 - A name containing `(proxy)` is a tradable proxy, not the underlying index. In particular, `TOPIX ETF (proxy)` is not TOPIX itself.
 - Indicator discovery also returns `proxy`; preserve that label for RSP/SMH/HYG/TLT/LQD/KRE/XLY/XLP and never describe an ETF price as an official index, credit spread, or Treasury yield.
+- Series sourced from `krx` (`kr_put_call_*`, `kr_vkospi`) are derived by the KRX collector from a bulk table rather than fetched per key. They are ordinary indicator series to read; only their provenance differs.
 - `source_url` identifies the provider series page. `latest_date` is the observation date and `retrieved_at` is collection time.
 - Correlation and lead-lag results are descriptive sample statistics. They do not establish prediction or causality, and trading-session timing can affect lags.
 - Spillover uses generalized FEVD / Diebold-Yilmaz connectedness. Directional shock contribution is not structural causality.

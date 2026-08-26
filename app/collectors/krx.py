@@ -45,7 +45,11 @@ DATASETS = [
     _spec("kospi_dd_trd", "idx/kospi_dd_trd", "KOSPI 시리즈 지수", "index", "light"),
     _spec("kosdaq_dd_trd", "idx/kosdaq_dd_trd", "KOSDAQ 시리즈 지수", "index", "light"),
     _spec("bon_dd_trd", "idx/bon_dd_trd", "채권지수", "bond_index", "balanced"),
-    _spec("drvprod_dd_trd", "idx/drvprod_dd_trd", "파생상품지수", "derivative_index", "balanced"),
+    # VKOSPI arrives as one row among 320 derivative indices. Promoting it to
+    # an indicator series is what makes it addressable by name instead of
+    # requiring every consumer to know the row it hides in.
+    _spec("drvprod_dd_trd", "idx/drvprod_dd_trd", "파생상품지수", "derivative_index",
+          "balanced", aggregate="named_index"),
     _spec("stk_bydd_trd", "sto/stk_bydd_trd", "유가증권", "stock", "balanced"),
     _spec("ksq_bydd_trd", "sto/ksq_bydd_trd", "코스닥", "stock", "balanced"),
     _spec("knx_bydd_trd", "sto/knx_bydd_trd", "코넥스", "stock", "balanced"),
@@ -267,6 +271,26 @@ def normalize_rows(spec: dict, rows: list[dict], day: str) -> list[dict]:
 # a different table and far too thin to carry a market-wide signal, and the
 # overnight session is excluded so the ratio describes one regular session.
 PUT_CALL_PRODUCTS = ("코스피200 옵션", "코스피200 위클리(목) 옵션", "코스피200 위클리(월) 옵션")
+
+
+# Provider index names mapped to the catalog keys that address them.
+NAMED_INDICES = {
+    "코스피 200 변동성지수": "kr_vkospi",
+}
+
+
+def extract_named_indices(rows: list[dict], day: str) -> list[dict]:
+    """Lift individually useful indices out of a bulk index table."""
+    points = []
+    for row in rows:
+        key = NAMED_INDICES.get(str(row.get("IDX_NM", "")).strip())
+        if not key:
+            continue
+        value = _number(_first(row, "CLSPRC_IDX", "TDD_CLSPRC"))
+        if value is None:
+            continue
+        points.append({"indicator": key, "date": _iso_day(day), "value": value})
+    return points
 
 
 def aggregate_put_call(rows: list[dict], day: str) -> list[dict]:

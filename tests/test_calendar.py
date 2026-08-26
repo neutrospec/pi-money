@@ -206,11 +206,12 @@ class IndicatorTests(unittest.TestCase):
 
     def test_catalog_is_well_formed(self):
         catalog = indicators.catalog()
-        self.assertEqual(164, len(catalog))
+        self.assertEqual(168, len(catalog))
         for key, spec in catalog.items():
             self.assertTrue(key)
             self.assertIn(
-                spec["source"], {"fred", "ecos", "ecos_raw", "ecb", "boe", "yahoo"}
+                spec["source"],
+                {"fred", "ecos", "ecos_raw", "ecb", "boe", "yahoo", "krx"},
             )
             self.assertIn(spec["category"], indicators.categories())
             self.assertIn(spec["priority"], {"core", "supporting"})
@@ -271,11 +272,52 @@ class KrxTests(unittest.TestCase):
         self.assertNotIn("eqsop_bydd_trd", datasets)
         self.assertEqual(31, len(krx.dataset_specs("all")))
 
-    def test_only_the_option_table_is_tagged_for_aggregation(self):
+    def test_aggregation_tags_name_a_known_summariser(self):
         tagged = {
-            item["dataset"] for item in krx.DATASETS if item.get("aggregate")
+            item["dataset"]: item["aggregate"]
+            for item in krx.DATASETS if item.get("aggregate")
         }
-        self.assertEqual({"opt_bydd_trd"}, tagged)
+        self.assertEqual(
+            {"opt_bydd_trd": "put_call", "drvprod_dd_trd": "named_index"}, tagged
+        )
+
+    def test_vkospi_is_lifted_out_of_the_bulk_index_table(self):
+        # It arrives as one row among 320 derivative indices; a consumer must
+        # not have to know which row it hides in.
+        points = krx.extract_named_indices([
+            {"IDX_NM": "코스피 200 변동성지수", "CLSPRC_IDX": "56.29"},
+            {"IDX_NM": "코스피 200 가치저변동성", "CLSPRC_IDX": "1234.5"},
+        ], "2026-08-25")
+        self.assertEqual(
+            [{"indicator": "kr_vkospi", "date": "2026-08-25", "value": 56.29}],
+            points,
+        )
+
+    def test_a_named_index_without_a_close_is_skipped(self):
+        self.assertEqual([], krx.extract_named_indices(
+            [{"IDX_NM": "코스피 200 변동성지수", "CLSPRC_IDX": ""}], "2026-08-25"
+        ))
+
+    def test_collector_fed_series_are_not_fetched_one_key_at_a_time(self):
+        # They are catalogued so agents can discover them, but requesting them
+        # from a provider would fail on every run.
+        from app import registry
+        from app.collectors import indicators
+
+        daily = [
+            key for key in indicators.catalog()
+            if indicators.cycle_of(key) == "D"
+        ]
+        self.assertIn("kr_vkospi", daily)
+        self.assertTrue(indicators.is_collector_fed("kr_vkospi"))
+        with patch.object(
+            indicators, "fetch_keys_into_db", return_value={}
+        ) as fetch:
+            registry._run_indicators({"D"})
+        requested = fetch.call_args[0][0]
+        self.assertNotIn("kr_vkospi", requested)
+        self.assertNotIn("kr_put_call_volume", requested)
+        self.assertIn("us_10y", requested)
 
     def test_put_call_ratio_uses_index_options_from_the_regular_session(self):
         rows = [
@@ -985,6 +1027,7 @@ class McpTests(TemporaryDatabaseTest):
             "market_yield_curve", "market_index_analysis", "market_technical",
             "market_risk", "market_regime", "market_sentiment",
             "market_derived_metrics", "market_breadth",
+            "market_datasets", "market_daily",
         }, names)
         self.assertEqual("ok", mcp_server.market_health()["database_integrity"])
         self.assertIn("reconciliation", mcp_server.market_health())
