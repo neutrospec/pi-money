@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}지수 — Money Market Intelligence{% endblock %}
+{% block content %}
+  <div class="pagehead">
+    <h1>🌏 글로벌 지수</h1>
+    <div class="sub">전 세계 주요 지수 · 풀 히스토리 · 실시간에 준하는 갱신</div>
+  </div>
+  <div id="content"><p style="color:#8b949e;">불러오는 중...</p></div>
+  <div style="margin-top:24px;"><div style="font-size:16px;font-weight:700;margin-bottom:8px;" id="detailTitle"></div><div id="detailChart" style="width:100%;height:420px;background:#161b22;border:1px solid #30363d;border-radius:10px;"></div></div>
+
+<script>
+let chart = null;
+function render() {
+  fetch('/api/indices').then(async r => { const d=await r.json(); if(!r.ok) throw new Error(d.detail||'지수 조회 실패'); return d; }).then(data => {
+    const groups = {};
+    data.indices.forEach(i => { (groups[i.region] = groups[i.region] || []).push(i); });
+    let html = '';
+    for (const g in groups) {
+      html += '<div style="margin-bottom:20px;"><div style="font-size:14px;font-weight:700;color:#58a6ff;border-bottom:1px solid #21262d;padding-bottom:6px;margin-bottom:8px;">' + g + '</div><table><thead><tr><th>지수</th><th>현재가</th><th>등락률</th></tr></thead><tbody>';
+      groups[g].forEach(i => {
+        const cls = i.change_pct > 0 ? 'up' : (i.change_pct < 0 ? 'down' : 'flat');
+        const arrow = i.change_pct > 0 ? '▲' : (i.change_pct < 0 ? '▼' : '');
+        html += '<tr style="cursor:pointer" onclick="showIndex(\'' + i.symbol + '\')" title="' + (i.desc || '') + '"><td>' + i.name + ' <span style="color:#8b949e;font-size:12px">(' + i.symbol + ')</span></td>'
+          + '<td class="num">' + (i.value != null ? i.value.toLocaleString() : '-') + '</td>'
+          + '<td class="num ' + cls + '">' + arrow + ' ' + (i.change_pct != null ? i.change_pct.toFixed(2) + '%' : '-') + '</td></tr>';
+      });
+      html += '</tbody></table></div>';
+    }
+    document.getElementById('content').innerHTML = html;
+  }).catch(error => { document.getElementById('content').textContent=error.message; });
+}
+function showIndex(symbol) {
+  fetch('/api/index/' + encodeURIComponent(symbol)).then(async r => { const d=await r.json(); if(!r.ok) throw new Error(d.detail||'지수 이력 조회 실패'); return d; }).then(d => {
+    document.getElementById('detailTitle').textContent = d.name + ' (' + d.region + ') — 전체 역사';
+    if (chart) chart.dispose();
+    chart = echarts.init(document.getElementById('detailChart'));
+    const dates = d.points.map(p => p.date);
+    const vals = d.points.map(p => p.value);
+    chart.setOption({
+      backgroundColor:'#161b22',tooltip:{trigger:'axis'},
+      grid:{left:70,right:30,top:30,bottom:60},
+      xAxis:{type:'category',data:dates,axisLabel:{color:'#8b949e'}},
+      yAxis:{type:'value',scale:true,axisLabel:{color:'#8b949e'}},
+      dataZoom:[{type:'inside'},{type:'slider'}],
+      series:[{name:d.name,type:'line',data:vals,showSymbol:false,lineStyle:{width:1.5},areaStyle:{opacity:0.08}}]
+    });
+  }).catch(error => { document.getElementById('detailTitle').textContent=error.message; });
+}
+render();
+setInterval(render, 120000);
+</script>
+{% endblock %}

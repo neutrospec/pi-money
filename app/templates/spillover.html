@@ -1,0 +1,235 @@
+{% extends "base.html" %}
+{% block title %}전이효과 — Money Market Intelligence{% endblock %}
+{% block content %}
+  <div class="pagehead">
+    <h1>🌐 전이효과 네트워크 (Spillover)</h1>
+    <div class="sub">일반화 FEVD 기반 Diebold-Yilmaz 연결성 · 충격 기여도이며 구조적 인과관계는 아님</div>
+  </div>
+
+  <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:16px;">
+    <div style="background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:12px 16px;flex:1;min-width:150px;"><div style="font-size:22px;font-weight:700;" id="stTotal">-</div><div style="color:#8b949e;font-size:11px;margin-top:2px;">총 연결성</div></div>
+    <div style="background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:12px 16px;flex:1;min-width:150px;"><div style="font-size:22px;font-weight:700;" id="stTop">-</div><div style="color:#8b949e;font-size:11px;margin-top:2px;">최대 전파자</div></div>
+    <div style="background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:12px 16px;flex:1;min-width:150px;"><div style="font-size:22px;font-weight:700;" id="stBot">-</div><div style="color:#8b949e;font-size:11px;margin-top:2px;">최대 수용자</div></div>
+  </div>
+
+  <div class="card">
+    <div class="spill-head">
+      <div>
+        <div class="card-title">전이 네트워크</div>
+        <div class="card-sub">위치·색 = 순 전파 방향 · 노드 크기 = 총 연결량 · 화살표 = 충격 전이 방향</div>
+      </div>
+      <label class="spill-density">표시 밀도
+        <select id="edgeDensity">
+          <option value="1">핵심</option>
+          <option value="2" selected>균형</option>
+          <option value="3">상세</option>
+        </select>
+      </label>
+    </div>
+    <div class="spill-meta">
+      <span id="edgeCount">-</span>
+      <span>가독성을 위해 지표별 상위 전파 경로만 표시하며 계산은 전체 FEVD 행렬을 사용합니다.</span>
+    </div>
+    <div id="hoverDetail" class="spill-detail" aria-live="polite">노드에 마우스를 올리면 주요 전파·수용 관계를 함께 강조합니다.</div>
+    <div class="spill-shell">
+      <div class="spill-lanes" aria-hidden="true"><span>순 전파자 (+)</span><span>중립</span><span>순 수용자 (−)</span></div>
+      <div id="netChart"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">지수별 순 전이 (Net Spillover)</div>
+    <div style="color:#8b949e;font-size:12px;margin-bottom:8px;">양(+) = 전파자 · 음(-) = 수용자</div>
+    <div class="scroll" id="netTable"></div>
+  </div>
+
+<style>
+.spill-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;}
+.spill-density{display:flex;align-items:center;gap:8px;color:#8b949e;font-size:12px;white-space:nowrap;}
+.spill-density select{background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:5px 24px 5px 8px;}
+.spill-meta{display:flex;gap:12px;flex-wrap:wrap;color:#8b949e;font-size:11px;margin:8px 0;}
+.spill-meta span:first-child{color:#58a6ff;font-weight:600;}
+.spill-detail{min-height:39px;display:flex;align-items:center;background:#0d1117;border:1px solid #30363d;border-radius:7px;padding:8px 12px;color:#c9d1d9;font-size:12px;line-height:1.5;}
+.spill-detail strong{color:#f0f6fc;margin-right:8px;}
+.spill-detail .to{color:#58a6ff;}.spill-detail .from{color:#f0883e;}
+.spill-shell{position:relative;margin-top:8px;border-top:1px solid #21262d;}
+.spill-lanes{position:absolute;z-index:2;left:5%;right:5%;top:10px;display:grid;grid-template-columns:1fr 1fr 1fr;pointer-events:none;color:#8b949e;font-size:11px;font-weight:600;}
+.spill-lanes span:nth-child(2){text-align:center;}.spill-lanes span:last-child{text-align:right;}
+#netChart{width:100%;height:620px;}
+@media(max-width:700px){
+  #netChart{height:720px}
+  .spill-head{align-items:stretch;flex-direction:column}
+  .spill-density{align-self:flex-end}
+  .spill-lanes{font-size:10px}
+}
+</style>
+
+<script>
+let chart=null;
+let networkData=null;
+
+function esc(value){
+  return String(value).replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
+}
+
+function visibleEdges(edges, perSource){
+  const grouped={};
+  edges.forEach(edge=>(grouped[edge.source]??=[]).push(edge));
+  return Object.values(grouped).flatMap(items=>
+    [...items].sort((a,b)=>b.value-a.value||a.target.localeCompare(b.target)).slice(0,perSource)
+  ).sort((a,b)=>b.value-a.value);
+}
+
+function nodeColor(net, neutralBand){
+  if(net>neutralBand)return '#58a6ff';
+  if(net<-neutralBand)return '#f0883e';
+  return '#d29922';
+}
+
+function buildNodes(data){
+  const maxNet=Math.max(...data.nodes.map(n=>n.net));
+  const minNet=Math.min(...data.nodes.map(n=>n.net));
+  const netRange=Math.max(maxNet-minNet,0.0001);
+  const maxAbs=Math.max(...data.nodes.map(n=>Math.abs(n.net)),0.0001);
+  const neutralBand=Math.max(0.015,maxAbs*0.12);
+  const grossValues=data.nodes.map(n=>n.to+n.from);
+  const minGross=Math.min(...grossValues),maxGross=Math.max(...grossValues);
+  const grossRange=Math.max(maxGross-minGross,0.0001);
+  const lanes=Array.from({length:5},()=>[]);
+  data.nodes.forEach(n=>{
+    const lane=Math.max(0,Math.min(4,Math.round((maxNet-n.net)/netRange*4)));
+    lanes[lane].push({...n,lane,gross:n.to+n.from});
+  });
+  const nodes=[];
+  lanes.forEach((items,lane)=>{
+    items.sort((a,b)=>b.gross-a.gross||a.name.localeCompare(b.name));
+    items.forEach((n,index)=>nodes.push({
+      ...n,
+      x:lane*250,
+      y:40+(index+1)*(500/(items.length+1)),
+      symbolSize:32+20*((n.gross-minGross)/grossRange),
+      itemStyle:{color:nodeColor(n.net,neutralBand),borderColor:'#0d1117',borderWidth:2,opacity:0.96},
+      label:{position:lane<=1?'right':lane>=3?'left':'top'}
+    }));
+  });
+  return nodes;
+}
+
+function updateHover(name){
+  const node=networkData.nodes.find(n=>n.name===name);
+  const outgoing=networkData.edges.filter(e=>e.source===name).sort((a,b)=>b.value-a.value).slice(0,3);
+  const incoming=networkData.edges.filter(e=>e.target===name).sort((a,b)=>b.value-a.value).slice(0,3);
+  const relation=(items,key)=>items.length
+    ? items.map(e=>esc(e[key])+' '+(e.value*100).toFixed(1)+'%').join(' · ')
+    : '표시 기준 이상 없음';
+  document.getElementById('hoverDetail').innerHTML=
+    '<strong>'+esc(name)+'</strong> NET '+node.net.toFixed(3)+
+    ' &nbsp; <span class="to">전파 → '+relation(outgoing,'target')+'</span>'+
+    ' &nbsp; <span class="from">수용 ← '+relation(incoming,'source')+'</span>';
+}
+
+function resetHover(){
+  document.getElementById('hoverDetail').textContent='노드에 마우스를 올리면 주요 전파·수용 관계를 함께 강조합니다.';
+}
+
+function renderNetwork(){
+  if(!networkData)return;
+  const perSource=Number(document.getElementById('edgeDensity').value);
+  const selected=visibleEdges(networkData.edges,perSource);
+  document.getElementById('edgeCount').textContent=
+    '간선 '+selected.length+'개 표시 / 전체 '+networkData.edges.length+'개';
+  const values=selected.map(e=>e.value);
+  const minEdge=values.length?Math.min(...values):0;
+  const maxEdge=values.length?Math.max(...values):1;
+  const edgeRange=Math.max(maxEdge-minEdge,0.0001);
+  const links=selected.map(e=>({
+    ...e,
+    lineStyle:{
+      color:'#58a6ff',
+      width:1.2+3.8*((e.value-minEdge)/edgeRange),
+      opacity:0.24+0.46*((e.value-minEdge)/edgeRange),
+      curveness:e.source<e.target?0.10:-0.10
+    }
+  }));
+  if(chart)chart.dispose();
+  chart=echarts.init(document.getElementById('netChart'));
+  chart.setOption({
+    backgroundColor:'#161b22',
+    animationDurationUpdate:350,
+    aria:{enabled:true,description:'지수 간 충격 전이 네트워크. 왼쪽은 순 전파자, 오른쪽은 순 수용자입니다.'},
+    tooltip:{
+      confine:true,
+      backgroundColor:'rgba(13,17,23,.96)',
+      borderColor:'#30363d',
+      textStyle:{color:'#e6edf3'},
+      formatter:p=>p.dataType==='edge'
+        ? esc(p.data.source)+' → '+esc(p.data.target)+'<br>FEVD 기여 '+(p.data.value*100).toFixed(2)+'%'
+        : '<strong>'+esc(p.name)+'</strong><br>TO '+p.data.to.toFixed(3)+' · FROM '+p.data.from.toFixed(3)+' · NET '+p.data.net.toFixed(3)
+    },
+    series:[{
+      type:'graph',
+      layout:'none',
+      left:70,right:70,top:52,bottom:25,
+      data:buildNodes(networkData),
+      links,
+      roam:true,
+      scaleLimit:{min:0.75,max:2.5},
+      draggable:false,
+      edgeSymbol:['none','arrow'],
+      edgeSymbolSize:[0,8],
+      label:{show:true,color:'#e6edf3',fontSize:11,backgroundColor:'rgba(13,17,23,.78)',padding:[2,4],borderRadius:3},
+      labelLayout:{hideOverlap:true},
+      lineStyle:{color:'#58a6ff'},
+      emphasis:{
+        focus:'adjacency',blurScope:'coordinateSystem',scale:1.16,
+        itemStyle:{borderColor:'#f0f6fc',borderWidth:3,shadowBlur:14,shadowColor:'rgba(88,166,255,.65)'},
+        label:{show:true,color:'#fff',fontWeight:700},
+        lineStyle:{opacity:1,width:5}
+      },
+      blur:{itemStyle:{opacity:0.12},label:{opacity:0.10},lineStyle:{opacity:0.025}}
+    }]
+  });
+  chart.on('mouseover',params=>{
+    if(params.dataType==='node'){
+      chart.dispatchAction({type:'focusNodeAdjacency',seriesIndex:0,dataIndex:params.dataIndex});
+      updateHover(params.name);
+    }else if(params.dataType==='edge'){
+      document.getElementById('hoverDetail').innerHTML='<strong>'+esc(params.data.source)+' → '+esc(params.data.target)+'</strong> FEVD 기여 '+(params.data.value*100).toFixed(2)+'%';
+    }
+  });
+  chart.getZr().on('globalout',()=>{
+    chart.dispatchAction({type:'unfocusNodeAdjacency',seriesIndex:0});
+    resetHover();
+  });
+}
+
+function render(){
+  fetch('/api/spillover').then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.detail||'분석 실패');return d;}).then(d=>{
+    networkData=d;
+    const sorted=[...d.nodes].sort((a,b)=>b.net-a.net);
+    document.getElementById('stTotal').textContent=(d.total_connectedness*100).toFixed(1)+'%';
+    document.getElementById('stTop').textContent=sorted[0].name+' (+'+sorted[0].net.toFixed(2)+')';
+    document.getElementById('stBot').textContent=sorted[sorted.length-1].name+' ('+sorted[sorted.length-1].net.toFixed(2)+')';
+    let th='<table><thead><tr><th>지수</th><th>전파 TO</th><th>수용 FROM</th><th>순 NET</th></tr></thead><tbody>';
+    sorted.forEach(n=>{
+      // Net spillover is a signed statistic, so it uses the neutral axis.
+      // The node colouring above already means "net transmitter"; painting
+      // the same number red here made one value two opposite colours.
+      const cls=n.net>=0?'pos':'neg';
+      th+='<tr><td>'+esc(n.name)+'</td><td>'+n.to.toFixed(3)+'</td><td>'+n.from.toFixed(3)+'</td><td class="'+cls+'">'+n.net.toFixed(3)+'</td></tr>';
+    });
+    th+='</tbody></table>';
+    document.getElementById('netTable').innerHTML=th;
+    renderNetwork();
+  }).catch(e=>{
+    document.getElementById('netTable').textContent=e.message;
+    document.getElementById('hoverDetail').textContent=e.message;
+  });
+}
+
+document.getElementById('edgeDensity').addEventListener('change',renderNetwork);
+window.addEventListener('resize',()=>chart&&chart.resize());
+render();
+setInterval(render,300000);
+</script>
+{% endblock %}

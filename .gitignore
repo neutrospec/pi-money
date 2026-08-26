@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# 환경변수 (API 키 — 절대 커밋 금지)
+.env
+
+# 데이터
+*.db
+*.sqlite
+*.sqlite3
+data/
+cache/
+
+# OS
+.DS_Store

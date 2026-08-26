@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% block title %}시장 상황판 — Money Market Intelligence{% endblock %}
+{% block content %}
+  {% set r = situation.regime %}
+  {% set f = situation.freshness %}
+  <div class="pagehead">
+    <h1>🧭 시장 상황판</h1>
+    <div class="sub">캐시된 관측치로 구성한 현재 상태 · {{ situation.as_of }} (KST) 기준</div>
+  </div>
+
+  {# Regime uses the traffic-light axis: red always means trouble, never
+     "price went up". The thresholds are heuristics, so the banner states
+     what drove them instead of only showing a verdict. #}
+  <div class="card" style="border-left:4px solid
+    {% if r.regime=='risk_off' %}#f85149{% elif r.regime=='risk_on' %}#3fb950{% else %}#d29922{% endif %};">
+    <div style="display:flex;flex-wrap:wrap;align-items:baseline;gap:12px;">
+      <div style="font-size:22px;font-weight:700;"
+           class="{% if r.regime=='risk_off' %}sig-danger{% elif r.regime=='risk_on' %}sig-ok{% else %}sig-warn{% endif %}">
+        {% if r.regime=='risk_off' %}위험 회피{% elif r.regime=='risk_on' %}위험 선호{% else %}중립{% endif %}
+      </div>
+      <div style="color:#8b949e;font-size:13px;">{{ r.reasons | join(' · ') }}</div>
+    </div>
+    <div style="color:#6e7681;font-size:11px;margin-top:8px;">
+      관측일 VIX {{ r.as_of.vix or '-' }} · 신용스프레드 {{ r.as_of.credit_spread or '-' }} · S&amp;P {{ r.as_of.sp500 or '-' }}
+      · 임계값 기반 참고 분류이며 투자 판단이 아닙니다.
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">주요 지수</div>
+    <div class="card-sub">각 시장의 마지막 정산 세션 종가 대비 등락 (상승 <span class="up">적</span> / 하락 <span class="down">청</span>)</div>
+    <div class="tiles">
+      {% for i in situation.indices %}
+      <div class="tile">
+        <div class="k">{{ i.region }} · {{ i.name }}</div>
+        <div class="v">{{ '%.2f' | format(i.value) if i.value is not none else '-' }}</div>
+        <div class="m">
+          {% if i.change_pct is not none %}
+          <span class="{{ 'up' if i.change_pct > 0 else ('down' if i.change_pct < 0 else 'flat') }}">
+            {{ '%+.2f' | format(i.change_pct) }}%
+          </span>
+          {% else %}<span class="flat">-</span>{% endif %}
+          · {{ i.session_date or '-' }}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  {% for g in situation.groups %}
+  <div class="grouphead">{{ g.title }}</div>
+  <div class="tiles">
+    {% for t in g.tiles %}
+    <div class="tile">
+      <div class="k">{{ t.label }}{% if t.proxy %} <span class="neg">proxy</span>{% endif %}</div>
+      <div class="v">
+        {{ '%.3f' | format(t.value) if t.value is not none else '-' }}
+        <span style="font-size:11px;font-weight:400;color:#8b949e;">{{ t.unit }}</span>
+      </div>
+      <div class="m">
+        {% if t.change is not none %}
+        {# A level change is a signed statistic, not a price move, so it uses
+           the neutral axis unless a rise specifically means tightening. #}
+        <span class="{% if t.direction == 'up_is_risk' %}{{ 'sig-danger' if t.change > 0 else ('sig-ok' if t.change < 0 else 'flat') }}{% else %}{{ 'pos' if t.change > 0 else ('neg' if t.change < 0 else 'flat') }}{% endif %}">
+          {{ '%+.3f' | format(t.change) }}
+        </span>
+        ·
+        {% endif %}
+        {{ t.date }} · {{ t.frequency }}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endfor %}
+
+  <div class="grouphead">파생 진단</div>
+  <div class="card">
+    <div class="card-sub">원천 지표를 날짜 정렬해 계산한 값입니다. 각 항목의 산식과 한계를 함께 표시합니다.</div>
+    <div class="tiles">
+      {% for item in situation.risk['items'] %}
+      <div class="tile">
+        <div class="k">{{ item.label }}</div>
+        <div class="v">{{ '%.3f' | format(item.value) }}
+          <span style="font-size:11px;font-weight:400;color:#8b949e;">{{ item.unit }}</span></div>
+        <div class="m">{{ item.date }}</div>
+        <div class="m" style="margin-top:4px;line-height:1.4;">{{ item.note }}</div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  {% if situation.events %}
+  <div class="grouphead">이번 주 주요 발표</div>
+  <div class="card">
+    <div class="card-sub">영향도 높음으로 분류된 향후 7일 일정만 표시합니다. 전체는 <a href="/calendar" style="color:#58a6ff;">일정</a>에서 봅니다.</div>
+    {% for ev in situation.events %}
+    <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #21262d;">
+      <div style="font-size:18px;width:26px;text-align:center;">{% if ev.country=='KR' %}🇰🇷{% elif ev.country=='US' %}🇺🇸{% elif ev.country=='EU' %}🇪🇺{% elif ev.country=='JP' %}🇯🇵{% elif ev.country=='GB' %}🇬🇧{% elif ev.country=='CN' %}🇨🇳{% else %}🌍{% endif %}</div>
+      <div style="flex:1;font-weight:600;font-size:14px;">{{ ev.title }}</div>
+      <div style="color:#8b949e;font-size:12px;white-space:nowrap;">{{ ev.date }} {{ ev.time or '시간 미정' }}</div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {# Freshness sits on the page it qualifies, not only in the admin screen:
+     a number is only as trustworthy as the collection behind it. #}
+  <div class="card" style="border-color:{% if f.status=='ok' %}#21262d{% else %}#d29922{% endif %};">
+    <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:center;font-size:12px;">
+      <span class="{{ 'sig-ok' if f.status=='ok' else 'sig-warn' }}" style="font-weight:700;">
+        {% if f.status=='ok' %}수집 정상{% else %}수집 확인 필요{% endif %}
+      </span>
+      <span style="color:#8b949e;">핵심 계열 {{ f.core_ready }}/{{ f.core_total }} 최신</span>
+      {% if f.stale %}<span class="sig-warn">허용 초과 지연 {{ f.stale }}</span>{% endif %}
+      {% if f.provider_stalled %}
+      <span class="sig-warn" title="공급자가 정상 발표 주기보다 늦게 갱신 중인 계열입니다. 수집 실패가 아닙니다.">공급자 정체 {{ f.provider_stalled }}</span>
+      {% endif %}
+      {% if f.missing %}<span class="sig-danger">누락 {{ f.missing }}</span>{% endif %}
+      {% if f.indices_behind %}<span class="sig-warn">지수 미반영 {{ f.indices_behind }}</span>{% endif %}
+      <span style="color:#6e7681;">마지막 수집 {{ f.last_collect_kst or '-' }} KST</span>
+      <a href="/manage" style="color:#58a6ff;margin-left:auto;">수집 상태 상세</a>
+    </div>
+  </div>
+{% endblock %}

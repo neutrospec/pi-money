@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% block title %}주식 — Money Market Intelligence{% endblock %}
+{% block content %}
+  <div class="pagehead">
+    <h1>💹 주식 · ETF 시세</h1>
+    <div class="sub">관심 종목 · 연금 ETF 현재가 · 등락률 (출처: Yahoo Finance)</div>
+    <div style="color:#8b949e;font-size:12px;margin-top:6px;">카테고리를 선택하면 해당 자산군만 볼 수 있습니다. 각 카테고리에 마우스를 올리면 설명이 표시됩니다.</div>
+  </div>
+  <div class="card">
+    <div class="card-title">캐시 기반 시장 진단</div>
+    <div class="card-sub">원천지표를 날짜 정렬해 계산한 유동성·신용·상대강도·KRX 시장폭</div>
+    <div id="diagnostics" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;">
+      <div style="color:#8b949e;font-size:12px;">불러오는 중...</div>
+    </div>
+  </div>
+  <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px;" id="catTabs"></div>
+  <div style="color:#8b949e;font-size:12px;margin-bottom:12px;" id="catDesc"></div>
+  <div id="content"><p style="color:#8b949e;">불러오는 중...</p></div>
+
+<script>
+let currentCat = null;
+let catData = [];
+function diagnosticCard(label, value, note) {
+  return '<div style="background:#0d1117;border:1px solid #21262d;border-radius:8px;padding:10px;">'
+    + '<div style="color:#8b949e;font-size:11px;">' + label + '</div>'
+    + '<div style="font-size:17px;font-weight:700;margin:4px 0;">' + value + '</div>'
+    + '<div style="color:#8b949e;font-size:10px;">' + note + '</div></div>';
+}
+function n(value, digits=2, suffix='') {
+  return value == null ? '-' : Number(value).toFixed(digits) + suffix;
+}
+function loadDiagnostics() {
+  Promise.all([
+    fetch('/api/analysis/derived').then(r => r.json()),
+    fetch('/api/analysis/krx-breadth').then(r => r.json())
+  ]).then(([d, b]) => {
+    const macro = d.macro || {};
+    const cross = d.cross_asset || {};
+    const credit = macro.kr_credit_spread_3y;
+    const realRate = macro.kr_real_policy_rate;
+    const liquidity = macro.us_net_liquidity;
+    const nfp = macro.us_nfp_monthly_change;
+    let html = diagnosticCard('한국 회사채-국고채 3Y', credit ? n(credit.value, 3, '%p') : '-', credit ? credit.date : '데이터 없음');
+    html += diagnosticCard('한국 실질 정책금리', realRate ? n(realRate.value_pct, 2, '%') : '-', realRate ? realRate.cpi_date + ' CPI 기준' : '데이터 없음');
+    html += diagnosticCard('미국 순유동성 proxy', liquidity ? n(liquidity.net_liquidity_million_usd / 1000000, 2, '조$') : '-', liquidity ? liquidity.as_of : '신규 FRED 수집 필요');
+    html += diagnosticCard('미국 NFP 월간 증감', nfp ? n(nfp.change_thousand, 0, '천명') : '-', nfp ? nfp.date : '데이터 없음');
+    const pairs = [
+      ['경기/필수소비재 60D', cross.discretionary_vs_staples],
+      ['HY/IG 회사채 60D', cross.high_yield_vs_investment_grade],
+      ['지역은행/S&P 60D', cross.regional_banks_vs_sp500]
+    ];
+    pairs.forEach(([label, item]) => {
+      html += diagnosticCard(label, item ? n(item.relative_60d_pct, 2, '%') : '-', item ? item.as_of : '신규 Yahoo 수집 필요');
+    });
+    (b.markets || []).forEach(m => {
+      const value = m.status === 'ok' ? 'A/D ' + n(m.advance_decline_ratio, 2) : '승인 대기';
+      const note = m.status === 'ok' ? m.as_of + ' · 상승 ' + n(m.advance_share_pct, 1, '%') : m.reason;
+      html += diagnosticCard(m.market + ' 시장폭', value, note);
+    });
+    document.getElementById('diagnostics').innerHTML = html;
+  }).catch(error => {
+    document.getElementById('diagnostics').textContent = '시장 진단을 불러오지 못했습니다: ' + error.message;
+  });
+}
+function loadCategories() {
+  fetch('/api/quotes/categories').then(r=>r.json()).then(d=>{
+    catData = d.categories;
+    const tabs = document.getElementById('catTabs');
+    const all = document.createElement('button');
+    all.textContent = '전체';
+    all.style.cssText = 'padding:6px 12px;border-radius:8px;background:#1f6feb;border:1px solid #1f6feb;cursor:pointer;font-size:12px;color:#fff;';
+    all.onclick = () => { currentCat = null; setActive(all); document.getElementById('catDesc').textContent = '전체 — 모든 카테고리'; render(); };
+    tabs.appendChild(all);
+    d.categories.forEach(c => {
+      const b = document.createElement('button');
+      b.textContent = c.name;
+      b.title = c.desc;
+      b.style.cssText = 'padding:6px 12px;border-radius:8px;background:#161b22;border:1px solid #30363d;cursor:pointer;font-size:12px;color:#e6edf3;';
+      b.onclick = () => { currentCat = c.name; setActive(b); document.getElementById('catDesc').textContent = c.desc; render(); };
+      tabs.appendChild(b);
+    });
+  });
+}
+function setActive(el) {
+  document.querySelectorAll('#catTabs button').forEach(x => { x.style.background='#161b22'; x.style.borderColor='#30363d'; x.style.color='#e6edf3'; });
+  el.style.background='#1f6feb'; el.style.borderColor='#1f6feb'; el.style.color='#fff';
+}
+function render() {
+  const url = currentCat ? '/api/quotes?category=' + encodeURIComponent(currentCat) : '/api/quotes';
+  fetch(url).then(r => r.json()).then(data => {
+    if (!data.quotes.length) { document.getElementById('content').innerHTML = '<p style="color:#8b949e;">시세가 없습니다.</p>'; return; }
+    const groups = {};
+    data.quotes.forEach(q => { (groups[q.group_name] = groups[q.group_name] || []).push(q); });
+    let html = '';
+    for (const g in groups) {
+      html += '<div style="margin-bottom:20px;"><div style="font-size:14px;font-weight:700;color:#58a6ff;border-bottom:1px solid #21262d;padding-bottom:6px;margin-bottom:8px;">' + g + '</div><table><thead><tr><th>종목</th><th>현재가</th><th>등락률</th></tr></thead><tbody>';
+      groups[g].forEach(q => {
+        const cls = q.change_pct > 0 ? 'up' : (q.change_pct < 0 ? 'down' : 'flat');
+        const arrow = q.change_pct > 0 ? '▲' : (q.change_pct < 0 ? '▼' : '');
+        html += '<tr><td>' + q.label + ' <span style="color:#8b949e;font-size:12px">(' + q.symbol + ')</span></td>'
+          + '<td class="num">' + (q.price != null ? q.price.toLocaleString() : '-') + '</td>'
+          + '<td class="num ' + cls + '">' + arrow + ' ' + (q.change_pct != null ? q.change_pct.toFixed(2) + '%' : '-') + '</td></tr>';
+      });
+      html += '</tbody></table></div>';
+    }
+    // data.as_of is the newest collection instant across the whole set;
+    // quotes[0] is merely the alphabetically first symbol.
+    html += '<div style="color:#8b949e;font-size:12px;margin-top:20px;">마지막 수집: ' + (data.as_of || '-') + ' (관측 시각이 아니라 수집 시각입니다)</div>';
+    document.getElementById('content').innerHTML = html;
+  });
+}
+loadCategories();
+loadDiagnostics();
+render();
+setInterval(render, 60000);
+</script>
+{% endblock %}

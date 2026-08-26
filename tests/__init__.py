@@ -1,0 +1,1 @@
+"""Money project test package."""

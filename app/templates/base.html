@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E📊%3C/text%3E%3C/svg%3E">
+<title>{% block title %}Money Market Intelligence{% endblock %}</title>
+<script src="/static/echarts.min.js"></script>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background:#0d1117; color:#e6edf3; font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif; }
+  /* top navigation */
+  .topbar {
+    background:#161b22; border-bottom:1px solid #30363d;
+    padding:0 24px; position:sticky; top:0; z-index:100;
+    display:flex; align-items:center; gap:24px; height:56px;
+  }
+  .brand { font-weight:700; font-size:16px; color:#e6edf3; text-decoration:none; white-space:nowrap; }
+  .brand span { color:#58a6ff; }
+  .nav { display:flex; gap:4px; overflow-x:auto; }
+  .nav a {
+    color:#8b949e; text-decoration:none; font-size:14px;
+    padding:8px 12px; border-radius:6px; white-space:nowrap;
+  }
+  .nav a:hover { color:#e6edf3; background:#21262d; }
+  .nav a.active { color:#e6edf3; background:#1f6feb; }
+  .main { max-width:1200px; margin:0 auto; padding:24px; }
+  /* page header */
+  .pagehead { margin-bottom:20px; }
+  .pagehead h1 { font-size:22px; }
+  .pagehead .sub { color:#8b949e; font-size:13px; margin-top:4px; }
+  .footer { color:#484f58; font-size:11px; text-align:center; padding:24px; border-top:1px solid #21262d; margin-top:30px; }
+  .card { background:#161b22; border:1px solid #30363d; border-radius:10px; padding:16px; margin-bottom:20px; }
+  .card-title { font-size:15px; font-weight:700; margin-bottom:4px; }
+  .card-sub { color:#8b949e; font-size:12px; margin-bottom:12px; }
+  table { width:100%; border-collapse:collapse; }
+  th { text-align:left; color:#8b949e; font-size:12px; padding:6px; border-bottom:1px solid #21262d; }
+  td { padding:6px; border-bottom:1px solid #161b22; font-size:13px; }
+  .scroll { max-height:400px; overflow-y:auto; }
+
+  /* Three colour axes that must never borrow each other's meaning.
+     price   — Korean market convention: a rise is red, a fall is blue-green.
+     analysis— a signed statistic with no market direction (correlation,
+               net spillover, a level's change). Neutral hues on purpose, so
+               a positive correlation never reads as "the market went up".
+     signal  — a state judgement: traffic-light, red always means trouble. */
+  .up { color:#f85149; } .down { color:#3fb950; } .flat { color:#8b949e; }
+  .pos { color:#58a6ff; } .neg { color:#f0883e; }
+  .sig-ok { color:#3fb950; } .sig-warn { color:#d29922; } .sig-danger { color:#f85149; }
+  .num { text-align:right; font-variant-numeric:tabular-nums; }
+  /* Wide content scrolls inside its own box; the page itself never does. */
+  .scroll { overflow-x:auto; }
+  .tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(165px,1fr)); gap:8px; }
+  .tile { background:#0d1117; border:1px solid #21262d; border-radius:8px; padding:10px 12px; }
+  .tile .k { color:#8b949e; font-size:11px; }
+  .tile .v { font-size:18px; font-weight:700; margin:3px 0; font-variant-numeric:tabular-nums; }
+  .tile .m { color:#6e7681; font-size:10px; }
+  .grouphead { font-size:12px; font-weight:700; color:#8b949e; letter-spacing:.5px;
+               text-transform:uppercase; margin:18px 0 8px; }
+  @media (max-width:640px) {
+    .main { padding:14px; }
+    .topbar { padding:0 12px; gap:12px; }
+    .pagehead h1 { font-size:19px; }
+  }
+</style>
+{% block head %}{% endblock %}
+</head>
+<body>
+  <div class="topbar">
+    <a class="brand" href="/">📊 Money<span>Intelligence</span></a>
+    <nav class="nav">
+      <a href="/" {% if active=='home' %}class="active"{% endif %}>상황판</a>
+      <a href="/calendar" {% if active=='calendar' %}class="active"{% endif %}>일정</a>
+      <a href="/charts" {% if active=='charts' %}class="active"{% endif %}>지표</a>
+      <a href="/stocks" {% if active=='stocks' %}class="active"{% endif %}>주식</a>
+      <a href="/indices" {% if active=='indices' %}class="active"{% endif %}>지수</a>
+      <a href="/correlation" {% if active=='correlation' %}class="active"{% endif %}>상관관계</a>
+      <a href="/spillover" {% if active=='spillover' %}class="active"{% endif %}>전이효과</a>
+      <a href="/manage" {% if active=='manage' %}class="active"{% endif %}>관리</a>
+    </nav>
+  </div>
+  <div class="main">
+    {% block content %}{% endblock %}
+  </div>
+  <div class="footer">출처: 공식 중앙은행·통계청·Yahoo Finance · 투자 참고용</div>
+</body>
+</html>

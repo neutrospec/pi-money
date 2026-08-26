@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}지표 — Money Market Intelligence{% endblock %}
+{% block content %}
+  <div class="pagehead">
+    <h1>📈 지표 차트</h1>
+    <div class="sub">한국 + 미국 전 지표 · 과거 추이 · 현재 값 · 향후 발표 예정일</div>
+    <div style="color:#8b949e;font-size:12px;margin-top:6px;">주황 점선 = 향후 예정 발표일 · 관측점 표시는 발표 주기가 성긴 계열에만 나타납니다</div>
+  </div>
+
+  <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px;" id="catTabs"></div>
+  <div style="color:#8b949e;font-size:12px;margin-bottom:12px;" id="catDesc"></div>
+  <div style="display:flex;gap:10px;align-items:center;margin-bottom:16px;flex-wrap:wrap;">
+    <select id="indSelect" style="background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:8px;padding:8px 12px;font-size:14px;min-width:260px;"></select>
+    <span style="color:#8b949e;font-size:12px;" id="count"></span>
+  </div>
+  <div style="color:#8b949e;font-size:13px;margin-bottom:6px;" id="meta"></div>
+  <div style="color:#f0883e;font-size:12px;margin-bottom:16px;" id="future"></div>
+  <div id="chart" style="width:100%;height:440px;background:#161b22;border:1px solid #30363d;border-radius:10px;margin-bottom:10px;"></div>
+
+<script>
+const cats = {{ cats | tojson }};
+let chart = null;
+let allItems = [];
+let catDescMap = {};
+function loadCatDescs() {
+  fetch('/api/indicator/categories').then(r=>r.json()).then(d=>{
+    d.categories.forEach(c => { catDescMap[c.name] = c.desc; });
+  });
+}
+function showCatDesc(cat) {
+  document.getElementById('catDesc').textContent = catDescMap[cat] || '';
+}
+function loadCategory(cat) {
+  fetch('/api/indicators?category=' + encodeURIComponent(cat)).then(r => r.json()).then(data => {
+    allItems = data.items;
+    const sel = document.getElementById('indSelect');
+    sel.innerHTML = '';
+    allItems.forEach(item => {
+      const opt = document.createElement('option');
+      opt.value = item.key; opt.textContent = item.label + ' (' + item.unit + ')';
+      opt.title = item.desc;
+      sel.appendChild(opt);
+    });
+    document.getElementById('count').textContent = data.count + '개 지표';
+    showCatDesc(cat);
+    if (allItems.length) render(allItems[0].key);
+  });
+}
+function render(key) {
+  fetch('/api/indicator/' + key).then(async r => {
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || '지표 조회 실패');
+    return data;
+  }).then(data => {
+    // show description if available
+    const item = allItems.find(i => i.key === key);
+    if (item && item.desc) {
+      document.getElementById('catDesc').textContent = item.desc;
+    }
+    document.getElementById('meta').textContent =
+      data.label + ' · 단위: ' + data.unit + ' · 현재: ' +
+      (data.points.length ? data.points[data.points.length-1].value : 'N/A') +
+      ' · 주기: ' + data.frequency +
+      ' · 출처: ' + (data.source === 'fred' ? 'FRED' : data.source === 'yahoo' ? 'Yahoo' : 'ECOS');
+    document.getElementById('future').textContent = data.future.length
+      ? '향후 예정 발표: ' + data.future.join(', ') : '향후 예정 발표: 정보 없음';
+    if (chart) chart.dispose();
+    chart = echarts.init(document.getElementById('chart'));
+    const dates = data.points.map(p => p.date);
+    const values = data.points.map(p => p.value);
+    chart.setOption({
+      backgroundColor:'#161b22', tooltip:{trigger:'axis'},
+      grid:{left:70,right:30,top:30,bottom:60},
+      xAxis:{type:'category',data:dates,axisLabel:{color:'#8b949e'}},
+      yAxis:{type:'value',scale:true,axisLabel:{color:'#8b949e'}},
+      dataZoom:[{type:'inside'},{type:'slider'}],
+      series:[{name:data.label,type:'line',data:values,showSymbol:false,lineStyle:{width:2},
+        markLine:{symbol:'none',data:data.future.map(d=>({xAxis:d})),lineStyle:{color:'#f0883e',type:'dashed'},label:{formatter:'발표 예정',color:'#f0883e'}},
+        // Release markers help on a monthly series with tens of points and
+        // bury a daily one with a thousand, so they are drawn only where
+        // each point really is a distinct publication.
+        showSymbol:values.length<=60,symbolSize:6,
+        itemStyle:{color:'#58a6ff'}}]
+    });
+  }).catch(error => { document.getElementById('meta').textContent = error.message; });
+}
+const ct = document.getElementById('catTabs');
+cats.forEach(cat => {
+  const b = document.createElement('button');
+  b.textContent = cat;
+  b.style.cssText = 'padding:6px 12px;border-radius:8px;background:#161b22;border:1px solid #30363d;cursor:pointer;font-size:12px;color:#e6edf3;';
+  b.onclick = () => {
+    document.querySelectorAll('#catTabs button').forEach(x => { x.style.background='#161b22'; x.style.borderColor='#30363d'; });
+    b.style.background='#1f6feb'; b.style.borderColor='#1f6feb';
+    loadCategory(cat);
+  };
+  ct.appendChild(b);
+});
+document.getElementById('indSelect').onchange = (e) => render(e.target.value);
+loadCatDescs();
+if (cats.length) { ct.children[0].click(); }
+</script>
+{% endblock %}

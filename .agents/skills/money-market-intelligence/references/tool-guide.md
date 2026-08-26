@@ -1,0 +1,61 @@
+# Tool guide
+
+MCP and pi expose the same 17 canonical capabilities. MCP reads SQLite
+directly; pi calls the matching cache-only REST endpoint. MCP reads SQLite directly; pi calls the matching cache-only REST endpoint.
+
+| Tool | Use it for | Important inputs |
+|------|------------|------------------|
+| `market_health` | Database integrity, last collection, partial/error collectors, overall/core analysis coverage, completeness verdict | none |
+| `market_coverage` | Which observations are missing and whether the collector can still recover them | optional `key`: an indicator key or index symbol |
+| `market_situation` | The whole front-page state in one call: regime, core levels, derived risk, this week's high-impact releases, freshness | none |
+| `market_events` | Upcoming official economic events in KST | `days` 1–365, optional ISO country code in MCP |
+| `market_quotes` | Curated watchlist's last collected quotes | optional category in MCP |
+| `market_indices` | Allowed global indices, symbols, latest observations | none |
+| `market_indicator_list` | Discover indicator keys, analysis group, core priority, proxy/source metadata, and latest/retrieval dates | optional exact category |
+| `market_indicator` | One indicator's cached time series | exact `key`; MCP `limit` 1–1000 |
+| `market_universe` | Search provider-discovered KRX instruments and datasets | `query`, `source`, `dataset`, `asset_type`, `limit` |
+| `market_correlation` | Rolling and lead-lag correlation of two allowed indices | exact display names `a`, `b`; `window` 20–252; `max_lag` 0–20 |
+| `market_spillover` | Generalized-FEVD connectedness across cached indices | optional exact `region`; `maxlags` 1–10; `horizon` 1–50 |
+| `market_yield_curve` | Aligned US or Korean term spread | `country`: `us` or `kr` |
+| `market_index_analysis` | Trend, realized volatility, and maximum drawdown | allowed index `symbol`; `years` 1–20 |
+| `market_technical` | RSI, MACD, Bollinger, and trend description | allowed index `symbol`; `years` 1–20 |
+| `market_risk` | Sharpe, historical VaR/ES, and maximum drawdown | allowed index `symbol`; `years` 1–20 |
+| `market_regime` | Rule-based VIX/credit/S&P market-state summary | none |
+| `market_derived_metrics` | Aligned macro transformations and 20/60-day cross-asset relative strength | none |
+| `market_breadth` | KOSPI/KOSDAQ advance-decline, turnover, concentration, and bounded 20-day breadth | none |
+
+## Identifier rules
+
+- Indicator tools use catalog keys such as `kr_base_rate`, `us_cpi`, or `us_10y`.
+- Broad analysis should discover `priority=core` representatives by `analysis_group`; do not request all catalog entries by default.
+- `proxy=true` means the series is a tradable ETF price used only as a directional cross-check.
+- Correlation tools use exact display names such as `코스피` or `S&P 500`.
+- Index analysis tools use Yahoo symbols from `market_indices`, such as `^KS11` or `^GSPC`.
+- The KRX universe can contain multiple datasets for a symbol. Preserve `source`, `dataset`, and `asset_type` when identifying a row.
+
+## Reading a coverage result
+
+`market_coverage` classifies every gap by what is known about it, and the
+three cases carry different obligations:
+
+- `confirmed` — the provider has the observation and the cache does not. This
+  is a real local deficit; the collector will retry it. Lower confidence and
+  say so.
+- `candidate` — the series' own publication cadence implies a date that is
+  absent. It may never have been published (a suspended statistical release
+  looks exactly like this). Do not assert the value exists.
+- `unverifiable` — a traded series whose provider session list has not been
+  captured yet. Absence of evidence here is not evidence of a gap.
+
+`tail` describes the end of the series rather than its interior:
+`fresh`/`stale` for indicators against their publication allowance, and
+`current`/`behind_provider` for indices against the provider's last settled
+session.
+
+## Empty and error results
+
+- Call `market_health` and report the relevant collector issue.
+- A healthy database does not imply every series is fresh or populated.
+- Report `coverage.core` gaps when they weaken a broad market conclusion; a low `core_ready_pct` lowers confidence even if collectors themselves are healthy.
+- If KRX universe results are empty, check the `krx_market` collector: KRX requires per-dataset approval even though access is free.
+- If an analysis reports insufficient observations, reduce scope only within the documented input range and only when that still answers the user's question.

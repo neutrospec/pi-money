@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+{% block title %}관리 — Money Market Intelligence{% endblock %}
+{% block content %}
+  <div class="pagehead">
+    <h1>🛠 수집 관리</h1>
+    <div class="sub">데이터 최신성 · 수집 로그 · 스케줄 상태 — 낡은 데이터와 API ban 방지</div>
+  </div>
+
+  <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:16px;">
+    <div style="background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:12px 16px;flex:1;min-width:140px;"><div style="font-size:20px;font-weight:700;" id="stInterval">-</div><div style="color:#8b949e;font-size:11px;margin-top:2px;">지수/시세 간격</div></div>
+    <div style="background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:12px 16px;flex:1;min-width:140px;"><div style="font-size:20px;font-weight:700;" id="stInd">-</div><div style="color:#8b949e;font-size:11px;margin-top:2px;">지표 수</div></div>
+    <div style="background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:12px 16px;flex:1;min-width:140px;"><div style="font-size:20px;font-weight:700;" id="stCore">-</div><div style="color:#8b949e;font-size:11px;margin-top:2px;">핵심 분석 준비</div></div>
+    <div style="background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:12px 16px;flex:1;min-width:140px;"><div style="font-size:20px;font-weight:700;" id="stIdx">-</div><div style="color:#8b949e;font-size:11px;margin-top:2px;">지수 수</div></div>
+    <div style="background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:12px 16px;flex:1;min-width:140px;"><div style="font-size:20px;font-weight:700;" id="stUniverse">-</div><div style="color:#8b949e;font-size:11px;margin-top:2px;">KRX 자동 발견 종목</div></div>
+    <div style="background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:12px 16px;flex:1;min-width:140px;"><div style="font-size:20px;font-weight:700;" id="stStale">-</div><div style="color:#8b949e;font-size:11px;margin-top:2px;">주기별 지연·누락 지표</div></div>
+    <div style="background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:12px 16px;flex:1;min-width:140px;"><div style="font-size:20px;font-weight:700;" id="stRepair">-</div><div style="color:#8b949e;font-size:11px;margin-top:2px;">결측 보상 상태</div></div>
+    <div style="background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:12px 16px;flex:1;min-width:140px;"><div style="font-size:20px;font-weight:700;" id="stHistory">-</div><div style="color:#8b949e;font-size:11px;margin-top:2px;">과거 완전성 방어</div></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">2차 과거 결측 복구</div>
+    <div class="card-sub" id="historyMeta">공급자 manifest와 종료 상태를 불러오는 중</div>
+    <div class="scroll"><table><thead><tr><th>유형</th><th>대상·범위</th><th>상태</th><th>판정·다음 조치</th></tr></thead><tbody id="historyBody"></tbody></table></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">결측 보상 감사 (Reconciliation)</div>
+    <div class="card-sub" id="repairMeta">서버 시작·주기 감사 상태를 불러오는 중</div>
+    <div class="scroll"><table><thead><tr><th>수집기</th><th>감사 결과</th><th>복구 결과·다음 시도</th></tr></thead><tbody id="repairBody"></tbody></table></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">스케줄러 등록 수집기</div>
+    <div class="card-sub">영속 상태 기준 마지막 확인·성공·결과 — 재시작 후에도 유지</div>
+    <div class="scroll"><table><thead><tr><th>수집기</th><th>간격</th><th>상태</th><th>마지막 확인</th></tr></thead><tbody id="schedBody"></tbody></table></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">수집 로그 (최근)</div>
+    <div class="card-sub">각 수집 실행의 성공률과 소요시간</div>
+    <div class="scroll"><table><thead><tr><th>시간</th><th>유형</th><th>성공</th><th>소요</th></tr></thead><tbody id="logBody"></tbody></table></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">지표 최신성</div>
+    <div class="card-sub">분석 목적·공급자 계열·시장 관측일·수집시각을 분리해 표시합니다.</div>
+    <div class="scroll"><table><thead><tr><th>지표</th><th>역할</th><th>출처·계열</th><th>관측일·수집시각</th><th>포인트</th><th>상태</th></tr></thead><tbody id="indBody"></tbody></table></div>
+  </div>
+
+<script>
+function statusOf(status){
+  if(status==='fresh') return '<span style="color:#3fb950">최신</span>';
+  if(status==='stale') return '<span style="color:#d29922">지연</span>';
+  return '<span style="color:#f85149">'+(status==='invalid'?'날짜 오류':'누락')+'</span>';
+}
+function render() {
+  fetch('/api/scheduler').then(r=>r.json()).then(sd=>{
+    const rec=sd.reconciliation||{};
+    const report=rec.report||[];
+    const pending=report.filter(x=>['backoff','audit_error','busy','no_audit'].includes(x.action)||(x.action==='repaired'&&x.status!=='success'));
+    const repair=document.getElementById('stRepair');
+    repair.textContent=pending.length?pending.length+'건 대기':'정상';
+    repair.style.color=pending.length?'#d29922':'#3fb950';
+    document.getElementById('repairMeta').textContent='마지막 감사 '+(rec.last_run?new Date(rec.last_run).toLocaleString():'아직')+' · 로컬 감사 '+(rec.audit_interval_seconds||0)+'초 · 정상/오류 backoff '+(rec.repair_backoff_seconds||0)+'/'+(rec.error_backoff_seconds||0)+'초';
+    let rh=''; report.forEach(x=>{
+      const detail=x.retry_in_seconds!=null?'약 '+Math.ceil(x.retry_in_seconds/60)+'분 후':(x.status?x.status+(x.total!=null?' '+x.ok+'/'+x.total:'')+(x.pending?' · '+x.pending+'건 대기':''):'-');
+      rh+='<tr><td>'+esc(x.name||'-')+'</td><td>'+esc(x.action||'-')+'</td><td>'+esc(detail)+'</td></tr>';
+    });
+    document.getElementById('repairBody').innerHTML=rh||'<tr><td colspan="3">감사 이력 없음</td></tr>';
+    const hist=sd.historical_recovery||{};
+    const hc=hist.counts||{};
+    const unresolved=(hc.pending||0)+(hc.retryable||0)+(hc.running||0);
+    const attention=(hc.blocked||0)+(hc.exhausted||0);
+    const history=document.getElementById('stHistory');
+    history.textContent=unresolved?unresolved+'건 복구 중':(attention?attention+'건 조치 필요':(hist.status==='ok'?'검증 완료':'대기'));
+    history.style.color=attention?'#f85149':(unresolved?'#d29922':'#3fb950');
+    const hp=hist.policy||{};
+    document.getElementById('historyMeta').textContent='상태 '+(hist.status||'never')+' · 완료/빈 값 '+(hc.complete||0)+'/'+(hc.verified_empty||0)+' · 최대 '+(hp.max_attempts||0)+'회 후 자동 종료 · 마지막 실행 '+(hist.last_run?new Date(hist.last_run).toLocaleString():'아직');
+    let hh=''; (hist.items||[]).forEach(x=>{
+      const target=(x.target||'-')+(x.scope?' @ '+x.scope:'');
+      const action=(x.reason||'-')+(x.next_attempt_at?' · '+new Date(x.next_attempt_at).toLocaleString():'');
+      hh+='<tr><td>'+esc(x.kind||'-')+'</td><td>'+esc(target)+'</td><td>'+esc(x.status||'-')+'</td><td>'+esc(action)+'</td></tr>';
+    });
+    document.getElementById('historyBody').innerHTML=hh||'<tr><td colspan="4">대기·차단·확정 빈 값 없음</td></tr>';
+    let sh='';
+    sd.collectors.forEach(c=>{
+      const st=c.state||{};
+      sh+='<tr><td>'+c.name+'</td><td>'+(c.interval/60).toFixed(0)+'분</td><td>'+esc(st.status||'never')+'</td><td>'+(st.last_attempt_at?new Date(st.last_attempt_at).toLocaleString():'아직')+'</td></tr>';
+    });
+    document.getElementById('schedBody').innerHTML=sh;
+  });
+  fetch('/api/manage/overview').then(r=>r.json()).then(d=>{
+    const iv=d.intervals;
+    document.getElementById('stInterval').textContent=(iv.quotes/60).toFixed(0)+'분';
+    document.getElementById('stInd').textContent=Object.keys(d.indicators).length;
+    const core=(d.coverage||{}).core||{};
+    const corePct=(d.coverage||{}).core_ready_pct||0;
+    const coreEl=document.getElementById('stCore');
+    coreEl.textContent=(core.fresh||0)+'/'+(core.total||0)+' ('+corePct+'%)';
+    coreEl.style.color=(core.fresh||0)===(core.total||0)?'#3fb950':'#d29922';
+    document.getElementById('stIdx').textContent=Object.keys(d.indices).length+'/'+d.expected_indices;
+    document.getElementById('stUniverse').textContent=d.market_universe.instruments.toLocaleString();
+    document.getElementById('stUniverse').title=d.market_universe.datasets+'/'+d.market_universe.expected_datasets+'개 데이터셋 · '+d.market_universe.daily_rows.toLocaleString()+'행 · '+(d.market_universe.latest_date||'미수집');
+    let stale=0; for(const k in d.indicators) if(d.indicators[k].status!=='fresh') stale++;
+    document.getElementById('stStale').textContent=stale;
+    document.getElementById('stStale').style.color=stale?'#d29922':'#3fb950';
+    let lh=''; d.logs.forEach(l=>{ const ok=l.status==='success'; lh+='<tr title="'+esc(l.details||'')+'"><td>'+esc(l.ts)+'</td><td>'+esc(l.category)+'</td><td style="color:'+(ok?'#3fb950':'#f85149')+'">'+l.ok+'/'+l.total+' ('+esc(l.status||'success')+')</td><td>'+(l.duration_ms/1000).toFixed(1)+'s</td></tr>'; });
+    document.getElementById('logBody').innerHTML=lh||'<tr><td colspan="4">로그 없음</td></tr>';
+    const rank={missing:0,invalid:1,stale:2,fresh:3};
+    let ih=''; Object.entries(d.indicators).sort((a,b)=>{
+      const priority=(a[1].priority==='core'?0:1)-(b[1].priority==='core'?0:1);
+      return priority||(rank[a[1].status]-rank[b[1].status])||(a[1].label||a[0]).localeCompare(b[1].label||b[0]);
+    }).forEach(([k,v])=>{
+      const observed=(v.max_date||'-')+' · '+(v.retrieved_at?new Date(v.retrieved_at).toLocaleString():'미수집');
+      const role=(v.priority==='core'?'핵심 · ':'보조 · ')+(v.analysis_group||'-')+(v.proxy?' · proxy':'');
+      const source='<a href="'+esc(v.source_url||'#')+'" target="_blank" rel="noopener">'+esc(v.source||'-')+'</a> · '+esc(v.source_series||'-');
+      ih+='<tr><td><strong>'+esc(v.label||k)+'</strong><br><span style="color:#8b949e">'+esc(k)+'</span></td><td>'+esc(role)+'</td><td>'+source+'</td><td>'+esc(observed)+'</td><td>'+v.n+' ('+v.frequency+')</td><td>'+statusOf(v.status)+'</td></tr>';
+    });
+    document.getElementById('indBody').innerHTML=ih;
+  });
+}
+function esc(value){ const el=document.createElement('div'); el.textContent=String(value); return el.innerHTML; }
+render();
+setInterval(render, 30000);
+</script>
+{% endblock %}

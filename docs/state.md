@@ -1,0 +1,135 @@
+# 시스템 현재 상태
+
+> 마지막 갱신: 2026-08-26. 데이터 수치는 운영 SQLite를 재수집한 직후 기준입니다.
+
+## 구현 상태
+
+| 영역 | 현재 상태 |
+|------|-----------|
+| 저장소 | SQLite schema v8, WAL, busy timeout, 무결성 검사, 멱등 마이그레이션, 계열별 날짜 의미(`date_kind`), 공급자 정산 세션(`session_date`), 과거 복구 ledger |
+| 지표 | 164개 카탈로그 및 시계열(ECOS 81·ECOS 원표 8·FRED 59·Yahoo 13·BoE 2·ECB 1), 분석 그룹·우선순위·proxy·원문 URL, 계열별 날짜 의미, 변경값 빈티지 보존 |
+| 시장 데이터 | 글로벌 지수 24개 최대 20년 이력, 관심 종목 34개, KRX 승인 8개 데이터셋 4,387종목 자동 유니버스·일별 배치 수집 |
+| 일정 | 2026년 공식 발표 일정 39개, 원문 날짜·시간·시간대·URL과 KST 변환값 저장 |
+| 웹/API | 8개 웹 화면(첫 화면은 서버 렌더 시장 상황판), cache-only REST API, 파생 시장진단·KRX 시장폭, 로컬 ECharts 5.6.0 |
+| 에이전트 | 표준 MCP·pi 확장 각 18개 도구(상황판·커버리지 포함), 프로젝트 전용 해석 스킬 |
+| 운영 | 비차단 ASGI 시작, 1차 최신성 보상, 2차 manifest 과거 복구·유한 종료, SQLite 일관성 백업 |
+| 검증 | 네트워크 비의존 단위 테스트 117개, 시간 규약·커버리지 감사·상황판·pi/MCP 표면 동기화 회귀 |
+
+현재 DB에는 지표 관측치 38,192개와 지수 일별 관측치 118,405개가 있습니다. 공급자 재수집 시 값은 달라질 수 있습니다. 155개 지표 모두 관측치가 있으며, 핵심 34개는 34개 모두 최신입니다. 전체 최신성은 최신 150개·공급자 지연 5개·누락 0개입니다.
+
+공급자 지연 5개는 로컬 수집 누락이 아니라 일본·중국·영국·유로 지역의 OECD 경유 FRED 계열이 공급자에서도 오래 갱신되지 않은 경우입니다. 직접 공식 무료 원천으로 교체할 후보로 남겨두고, 정상 발표 시차가 있는 계열은 카탈로그의 `max_age_days`로 표현해 결측 복구가 같은 값을 반복 요청하지 않게 했습니다.
+
+## 데이터 소스
+
+| 소스 | 용도 | 인증 | 운영상 한계 |
+|------|------|------|-------------|
+| ECOS | 한국 금리·환율·물가·통화·성장 | `ECOS_API_KEY` | 발표 주기가 서로 다름 |
+| ECOS 원표 (817Y002) | KOFR·CP·통안증권·국고채 1~30년·회사채 BBB- | `ECOS_API_KEY` | pyecos 큐레이션에 없어 표·항목 코드로 직접 조회 |
+| ECB Data Portal | 유로존 EURIBOR 등 | 없음 | 무인증 SDMX-JSON |
+| Bank of England IADB | 영국 Bank Rate·SONIA | 없음 | 무인증 CSV |
+| FRED | 미국 및 일부 주요국 거시지표 | `FRED_API_KEY` | 실효금리와 정책 목표금리를 구분해야 함 |
+| KRX Open API | 국내 지수·주식·ETF/ETN·일반상품 전 종목 일별 표 | `KRX_API_KEY` 및 서비스별 승인 | EOD, 데이터셋별 신청 필요, 기본 행 수 상한 적용 |
+| Yahoo Finance | 글로벌 주식·ETF·지수·상품 | 없음 | 비공식 엔드포인트, rate limit·심볼 폐지 가능 |
+| 중앙은행·통계기관 공식 달력 | 정책회의와 미국 주요 발표 | 없음 | 확정된 2026 일정만 포함, 시간 미정은 `null` |
+
+KRX는 데이터셋별로 이용 신청과 승인이 필요합니다. 2026-08-26 기준 `balanced` 13개 중 8개가 승인됐습니다.
+
+| 데이터셋 | 상태 | 수집 결과 |
+|----------|------|-----------|
+| `stk_bydd_trd` 유가증권 | 승인 | 944종목 — KOSPI 시장폭 |
+| `ksq_bydd_trd` 코스닥 | 승인 | 1,823종목 — KOSDAQ 시장폭 |
+| `etf_bydd_trd` ETF | 승인 | 1,165종목 |
+| `krx_dd_trd` · `kospi_dd_trd` · `kosdaq_dd_trd` 지수 | 승인 | 40 · 51 · 40개 |
+| `bon_dd_trd` 채권지수 · `drvprod_dd_trd` 파생상품지수 | 승인 | 3 · 320개 |
+| `knx_bydd_trd` 코넥스 · `etn_bydd_trd` ETN · `oil_bydd_trd` 석유 · `gold_bydd_trd` 금 · `ets_bydd_trd` 배출권 | 미승인 | 현재 소비하는 분석 없음 |
+
+`all` 범위의 `stk_isu_base_info`(유가증권 기본정보)도 승인돼 있으나 기본 수집 범위에는 포함하지 않습니다.
+
+401은 데이터셋별 `blocked` 권한 gate로 영속화되어 명시적 reset 전에는 두 복구선 모두 같은 서비스를 다시 호출하지 않습니다. 추가 승인 후에는 `--history-reset --history-kind krx_access`로 재무장합니다.
+
+시장폭의 20일 지표(이동평균선 위 비중, 신고가·신저가)는 종목별 20거래일 관측치가 쌓여야 산출되므로, 신규 승인 직후에는 `eligible_issues=0`으로 표시되고 약 4주 뒤 자연히 채워집니다. 미승인 시장은 추정값 대신 `unavailable` 사유를 반환합니다.
+
+## 수집 주기
+
+| 수집기 | 기본 간격 | 최신성 판단 |
+|--------|-----------|-------------|
+| `quotes` | 5분 | 각 관심 종목의 수집 시각 |
+| `index_quotes` | 15분 | 각 지수 현재가 수집 시각 |
+| `index_history` | 6시간 | 최근 2년 250개 이상 및 마지막 거래일 5일 이내 |
+| `indicators_daily` | 6시간 | 실제 polling 주기; 계열별 데이터 연령은 별도 표시 |
+| `indicators_monthly` | 24시간 | 실제 polling 주기; 월간 발표 지연 허용 |
+| `indicators_quarterly` | 24시간 | 실제 polling 주기; 분기·연간 발표 지연 허용 |
+| `events` | 6시간 | 카탈로그 해시와 실제 저장 행이 모두 일치 |
+| `krx_market` | 24시간 | 최근 5거래일 × 선택 데이터셋의 성공/휴장일 기록 |
+| `historical_recovery` | 6시간 | 공급자 manifest 대비 과거 행 완전성, 실행당 호출·행 예산 적용 |
+
+`index_history`의 완전성은 벽시계 나이가 아니라 `index_quotes.session_date`(공급자가 정산한 마지막 세션)와 대조합니다. 15분 주기 시세 수집이 이미 받는 값이라 추가 호출이 없고, 휴장일과 수집 실패를 구분할 수 있습니다.
+
+재시작 시 1차 수집 상태는 `collector_state`, 2차 과거 완전성 상태는 `recovery_ledger`에서 복구됩니다. 2차는 공급자가 반환한 관측일 manifest가 SQLite에 모두 있으면 외부 호출 없이 종료합니다. 정상 빈 표는 `verified_empty`, 인증 오류는 `blocked`, 최대 3회 실패는 `exhausted`로 확정되어 자동 재시도하지 않습니다. 모든 수집은 직렬 실행되며 웹 요청은 외부 공급자를 호출하지 않습니다.
+
+## 주요 API
+
+| 엔드포인트 | 설명 |
+|-----------|------|
+| `GET /api/health` | DB 무결성, 1차 보상, 2차 과거 복구·종료 상태 |
+| `GET /api/events` | KST 일정 (`start`, `end`, `days`, `country`) |
+| `GET /api/indicators`, `/api/indicator/{key}` | 지표 메타데이터와 시계열 |
+| `GET /api/quotes`, `/api/quote/{symbol}` | 허용 목록의 관심 종목 캐시 |
+| `GET /api/indices`, `/api/index/{symbol}` | 지수 현재가와 일별 이력 |
+| `GET /api/market/universe`, `/api/market/daily` | 자동 발견 종목 카탈로그와 KRX 일별 전 종목 데이터 |
+| `GET /api/correlation/*` | pairwise 상관, 롤링, 시차 상관과 표본 수 |
+| `GET /api/spillover` | 일반화 FEVD 기반 방향성 연결성 |
+| `GET /api/analysis/*` | 수익률 곡선, 추세, 변동성, 기술, 위험, regime |
+| `GET /api/analysis/derived`, `/api/analysis/krx-breadth` | 날짜 정렬 파생지표와 캐시 기반 KRX 시장폭 |
+| `GET /api/manage/overview`, `/api/scheduler` | 수집 로그·최신성·1차 reconciliation·2차 recovery ledger |
+| `GET /api/coverage` | 계열별 기대 관측일 대비 실제 결측과 복구 가능성 (`detail=summary\|indicators\|indices`) |
+
+## 정합성 감사
+
+수집 완전성은 `app/coverage.py`가 계열마다 다른 근거로 판정합니다.
+
+| 날짜 유형 | 대상 | 기대 관측일 산출 |
+|-----------|------|------------------|
+| `trading_day` | 거래 가격·시장금리 (54개) | 공급자 세션 목록(manifest·`session_date`). 거래일 달력을 새 의존성으로 들이지 않습니다. |
+| `calendar_day` | 상시 유효 정책금리 (2개) | 구간 내 모든 날짜 |
+| `period_start` | 주·월·분기 (99개) | 고정 주기로 정확히 열거 |
+
+결측은 세 등급으로 보고합니다. `confirmed`는 공급자에 있는데 캐시에 없는 경우로 수집기가 보상 대상으로 큐잉하고, `candidate`는 자체 주기상 기대되지만 애초에 미발표일 수 있는 경우이며, `unverifiable`은 공급자 세션 목록을 아직 확보하지 못한 거래일 계열입니다. `/api/health`와 `market_health`가 `completeness`로 이 판정을 함께 반환합니다.
+
+현재 `confirmed` 결측은 없고, `candidate` 5건은 모두 2025-10 미국 통계 미발표 구간입니다. 핵심 계열은 38/38 최신입니다.
+
+허용치(`max_age_days`)를 넓힌 계열은 별도로 `provider_stalled`로 보고합니다. 허용치는 공급자가 움직이지 않는 계열을 반복 재요청하지 않기 위한 장치이지 사실을 감추는 장치가 아니므로, 정상 발표 주기를 넘긴 계열은 상태를 `fresh`로 두더라도 화면과 도구에 그대로 드러냅니다. 현재 7건이며 OECD 경유 영국·중국 CPI가 그중 가장 오래됐습니다.
+
+`date_kind`는 지표의 개념적 유효성이 아니라 **공급자의 발표 달력**을 따릅니다. 영국 Bank Rate는 주말에도 유효하지만 BoE가 영업일에만 게시하므로 `trading_day`이고, ECOS가 주말 포함 매일 게시하는 한국 기준금리는 `calendar_day`입니다. 이 구분을 개념으로 판단하면 유령 결측이 발생합니다.
+
+## 수집 구조
+
+관심사는 새 프레임워크가 아니라 모듈 경계로 분리돼 있습니다.
+
+```mermaid
+flowchart LR
+    A[collectors/*<br/>공급자별 fetch] --> B[collectors/yahoo.py<br/>페이로드 해석 규칙]
+    A --> C[timeutil.py<br/>시각·관측일 규약]
+    B --> C
+    C --> D[db.py<br/>저장·마이그레이션]
+    D --> E[coverage.py<br/>기대 대비 실제]
+    E --> F[registry.py · scheduler.py<br/>주기·보상]
+    E --> G[dashboard.py<br/>상황 조립]
+    G --> H[main.py · mcp_server.py<br/>표면]
+```
+
+각 경계가 담당하는 판단은 하나씩입니다. `timeutil`은 시각의 의미를, `collectors/yahoo.py`는 공급자 페이로드 해석을, `coverage.py`는 무엇이 있어야 하는지를, `dashboard.py`는 무엇을 먼저 보여줄지를 결정합니다. 이 분리로 ASX 날짜 오류와 등락률 부호 오류가 각각 한 곳에서 고쳐졌습니다.
+
+ECOS·FRED 수집기를 fetch/parse/store 계층으로 더 쪼개는 안은 검토 후 채택하지 않았습니다. 현재 각 함수는 이미 "공급자 응답 → 정규화된 관측치 목록" 한 가지만 하고 있어, 계층을 더 넣으면 `AGENTS.md`의 "불필요한 추상화 금지" 원칙에 어긋나는 간접 참조만 늘어납니다.
+
+## 알려진 한계
+
+- 일정은 자동 스크래핑이 아니라 공식 발표 자료를 코드로 큐레이션합니다. 새 연도 일정은 공식 확정 후 추가해야 합니다.
+- Yahoo Finance는 공식 계약형 API가 아니므로 장애 시 기존 캐시를 제공하고 수집 상태를 `partial/error`로 표시합니다.
+- KRX는 데이터셋별 이용 승인이 필요합니다. 일부만 승인된 현재 상태에서 `krx_market`은 정상적으로 `partial`을 보고합니다. 미승인 데이터셋이 남아 있는 한 `/api/health`는 `degraded`로 표시되며, 이는 수집 결함이 아니라 승인 범위를 반영합니다.
+- OECD MEI를 경유해 FRED에 게시되는 계열은 공급자가 2025년 중반 이후 갱신을 멈췄습니다. 유로존 3개월 금리와 영국 정책금리는 ECB·BoE 직접 원천으로 교체했고, 영국·중국 CPI는 FRED 내 최신 계열로 바꿨지만 여전히 공급자 지연 상태입니다. 이들의 `max_age_days`는 관측된 공급 현실을 표현하며, 로컬 결측을 감추지 않습니다. ONS 신규 API와 중국 NBS는 각각 관측치 엔드포인트 미동작·HTTP 403으로 확인돼 직접 파서는 미구현입니다.
+- 상관·시차 상관·방향성 연결성은 기술적 연관 지표이며 구조적 인과관계가 아닙니다.
+- regime, RSI, VaR 같은 결과는 규칙 기반 참고 정보이지 투자 권유가 아닙니다.
+- 프로세스 내부 스케줄러는 단일 worker 배포를 전제로 합니다. 다중 worker에서는 하나만 활성화해야 합니다.
+- 거래일 계열의 내부 결측은 공급자 manifest를 확보하기 전까지 `unverifiable`입니다. 2차 과거 복구가 진행되며 순차적으로 판정 가능해집니다.
+- 관측일은 각 시장의 로컬 거래일이므로, 서로 다른 시장의 같은 날짜가 동시간대 거래를 뜻하지 않습니다. 일별 교차시장 시차 분석에는 최대 한 세션의 타이밍 artifact가 남습니다.

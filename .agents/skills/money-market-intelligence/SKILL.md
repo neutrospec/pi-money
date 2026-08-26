@@ -1,0 +1,71 @@
+---
+name: money-market-intelligence
+description: Query and interpret the Money Market Intelligence project's cached Korean and global financial/economic data through its MCP or pi tools. Use when answering about collected quotes, global indices, KRX instruments, economic indicators or events, correlations, spillovers, yield curves, technical/risk metrics, market regimes, data freshness, or the project's market-data coverage.
+---
+
+# Money Market Intelligence
+
+Use this project's SQLite-backed tools as evidence. They are cache readers, not live market terminals.
+
+## Choose the interface
+
+- Prefer MCP tools when available. They read SQLite directly and do not require the web server.
+- Use the pi tools when operating inside pi. They call the local REST server at `http://localhost:8077`, so the server must be running.
+- Do not call ECOS, FRED, KRX, or Yahoo directly to answer a normal data question.
+- Do not run a collector unless the user explicitly asks to refresh data.
+
+See [references/tool-guide.md](references/tool-guide.md) for the canonical tool map and input conventions.
+
+## Follow this workflow
+
+1. If freshness matters, a result is empty, sources disagree, or the user asks for a broad market assessment, call `market_health` first.
+   - Inspect `coverage.core` and `coverage.core_ready_pct`; database integrity alone does not mean the evidence set is ready.
+   - Use `coverage.by_analysis_group` to name a weak or missing evidence layer instead of silently omitting it.
+   - `completeness.status` is `incomplete` when observations are known to be missing. Call `market_coverage` before treating any absence as a market fact, and `market_coverage` with a `key` when one series looks wrong.
+2. Discover identifiers instead of guessing:
+   - Use `market_indicator_list` before `market_indicator` when the indicator key is uncertain.
+   - Use `market_indices` to find an allowed index symbol or exact display name.
+   - Use `market_universe` for provider-discovered KRX instruments; this is broader than the quote watchlist.
+3. For "what is going on right now", call `market_situation` once instead of assembling the same picture from a dozen single-series calls. It returns the regime verdict, core policy/funding/risk levels, derived spreads and liquidity, this week's high-impact releases, and a freshness line — each with its own observation date.
+4. Call the narrowest tool that answers the question. Do not combine every analysis by default.
+   - For a broad market assessment, choose representative `core` series from the needed layers: `policy_rates`, `liquidity`, `credit_stress`, `growth_cycle`, `fx_external`, and `market_breadth`.
+   - Do not fetch every indicator. Prefer one primary series plus at most one cross-check per layer unless the user asks for a deep dive.
+   - Use `market_derived_metrics` for aligned transformations and cross-asset relative strength; do not duplicate its unit conversions ad hoc.
+   - Use `market_breadth` for cached KRX advance/decline and concentration data. An unavailable result usually means dataset approval is still pending.
+5. In the answer, state the market observation date, source, and whether the result is cached when those fields are relevant.
+6. If data is missing, stale, partial, or errored, report that limitation. Do not interpolate, invent a current value, or silently replace it with web data.
+   - Say which kind of absence it is: `confirmed` means the provider has it and we failed to collect it; `candidate` means the series' cadence implies it but it may never have been published. That distinction is itself evidence.
+
+## Distinguish dates
+
+- `date`, `latest_date`, `observation_date`, and analysis `as_of` identify the market/economic observation.
+- `updated`, `updated_at`, and `retrieved_at` identify collection or retrieval time.
+- Never present a retrieval timestamp as the date when the market value occurred.
+- Mixed-frequency economic indicators can have different valid latest dates. Compare aligned dates where the tool does so, and disclose mismatches otherwise.
+- Observation dates are each market's own local business date, so two markets sharing a date traded on their own sessions rather than simultaneously. Daily cross-market lead-lag therefore carries a timing artifact of up to one session.
+
+## Apply interpretation guardrails
+
+- `us_rate` is the monthly effective federal funds rate, not the FOMC target range.
+- A name containing `(proxy)` is a tradable proxy, not the underlying index. In particular, `TOPIX ETF (proxy)` is not TOPIX itself.
+- Indicator discovery also returns `proxy`; preserve that label for RSP/SMH/HYG/TLT/LQD/KRE/XLY/XLP and never describe an ETF price as an official index, credit spread, or Treasury yield.
+- `source_url` identifies the provider series page. `latest_date` is the observation date and `retrieved_at` is collection time.
+- Correlation and lead-lag results are descriptive sample statistics. They do not establish prediction or causality, and trading-session timing can affect lags.
+- Spillover uses generalized FEVD / Diebold-Yilmaz connectedness. Directional shock contribution is not structural causality.
+- Yield-curve inversion is one signal, not a standalone recession forecast or timing model.
+- RSI, MACD, Bollinger bands, moving-average crosses, and regime classification are heuristic or lagging descriptions, not trade instructions.
+- Historical VaR is a loss quantile, not the maximum possible or maximum expected loss. Report expected shortfall separately when available.
+- Sharpe, volatility, drawdown, VaR, regime, and technical results depend on the requested sample period.
+- Yahoo-backed values can be delayed or unavailable; do not call them official exchange data.
+
+## Compose the answer
+
+Lead with the direct finding, then attach compact evidence:
+
+```text
+결론: …
+근거: 값/분석 … (관측일 YYYY-MM-DD, 출처 …, 캐시)
+한계: 표본·최신성·방법론상 주의 …
+```
+
+Do not add an investment recommendation unless the user explicitly asks for decision support. Even then, frame it as scenario analysis with uncertainty, not a guaranteed action.

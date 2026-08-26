@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}일정 — Money Market Intelligence{% endblock %}
+{% block content %}
+  <div class="pagehead">
+    <h1>📅 경제 일정</h1>
+    <div class="sub">전 세계 주요 경제 일정 · {{ today }} ~ {{ end }} (KST)</div>
+  </div>
+
+  {% if next_event %}
+  <div class="card" style="border-color:#1f6feb;">
+    <div style="color:#8b949e;font-size:12px;text-transform:uppercase;letter-spacing:1px;">다음 주요 이벤트</div>
+    <div style="font-size:20px;font-weight:700;margin-top:4px;">
+      {% if next_event.days == 0 %}오늘{% else %}D-{{ next_event.days }}{% endif %}
+      · {{ next_event.event.title }}
+    </div>
+    <div style="color:#8b949e;font-size:12px;margin-top:4px;">
+      {{ next_event.event.date }} {{ next_event.event.time or '시간 미정' }} · 영향도 높음
+    </div>
+  </div>
+  {% endif %}
+
+  {% for date_key, day_events in groups.items() %}
+    <div style="margin-bottom:18px;">
+    <div style="font-size:13px;font-weight:700;color:#58a6ff;border-bottom:1px solid #21262d;padding-bottom:6px;margin-bottom:8px;">{{ date_key }}</div>
+    {% for ev in day_events %}
+    <div class="event" style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;margin-bottom:6px;background:#161b22;border-left:3px solid {% if ev.impact=='high' %}#f85149{% elif ev.impact=='medium' %}#d29922{% else %}#58a6ff{% endif %};">
+      <div style="font-size:20px;width:28px;text-align:center;">{% if ev.country=='KR' %}🇰🇷{% elif ev.country=='US' %}🇺🇸{% elif ev.country=='EU' %}🇪🇺{% elif ev.country=='JP' %}🇯🇵{% elif ev.country=='GB' %}🇬🇧{% elif ev.country=='CN' %}🇨🇳{% else %}🌍{% endif %}</div>
+      <div style="flex:1;">
+        <div style="font-weight:600;font-size:15px;">{{ ev.title }}</div>
+        {% if ev.note %}<div style="color:#8b949e;font-size:12px;margin-top:2px;">{{ ev.note }}</div>{% endif %}
+      </div>
+      <div style="color:#8b949e;font-size:12px;white-space:nowrap;">{{ ev.time or '시간 미정' }}</div>
+    </div>
+    {% endfor %}
+    </div>
+  {% else %}
+    <div class="card" style="color:#8b949e;text-align:center;padding:30px;">다음 일정이 없습니다.</div>
+  {% endfor %}
+{% endblock %}

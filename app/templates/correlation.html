@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}상관관계 — Money Market Intelligence{% endblock %}
+{% block content %}
+  <div class="pagehead">
+    <h1>🔗 지수 상관관계 분석</h1>
+    <div class="sub">수익률 기반 상관 · 롤링 상관 · 시차 상관 · 연관성은 인과관계가 아님</div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">상관관계 행렬</div>
+    <div class="card-sub">일별 수익률 기준 Pearson 상관계수 (최근 2년) · <span class="pos">파랑</span>은 양, <span class="neg">주황</span>은 음의 상관입니다. 가격 등락 색과 다른 축을 씁니다.</div>
+    <div style="color:#8b949e;font-size:12px;margin-bottom:8px;" id="matrixLegend"></div>
+    <div id="matrixChart" style="width:100%;height:480px;"></div>
+  </div>
+
+  <div style="display:flex;gap:16px;flex-wrap:wrap;">
+    <div class="card" style="flex:1;min-width:340px;">
+      <div class="card-title">롤링 상관관계</div>
+      <div class="card-sub">시간에 따라 변하는 상관계수 (국면 전환 파악)</div>
+      <div>
+        <select id="rollA" style="background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:8px;padding:8px;font-size:13px;margin-right:8px;"></select>
+        <select id="rollB" style="background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:8px;padding:8px;font-size:13px;margin-right:8px;"></select>
+        <button onclick="loadRolling()" style="background:#1f6feb;color:#fff;border:none;border-radius:8px;padding:8px 12px;cursor:pointer;font-size:13px;">분석</button>
+      </div>
+      <div id="rollingChart" style="width:100%;height:300px;margin-top:12px;"></div>
+    </div>
+    <div class="card" style="flex:1;min-width:340px;">
+      <div class="card-title">시차 상관 (Lead-Lag)</div>
+      <div class="card-sub">공통 거래일 수익률의 시간 이동 상관 · 예측력이나 인과관계의 증거가 아님</div>
+      <div>
+        <select id="lagA" style="background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:8px;padding:8px;font-size:13px;margin-right:8px;"></select>
+        <select id="lagB" style="background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:8px;padding:8px;font-size:13px;margin-right:8px;"></select>
+        <button onclick="loadLeadLag()" style="background:#1f6feb;color:#fff;border:none;border-radius:8px;padding:8px 12px;cursor:pointer;font-size:13px;">분석</button>
+      </div>
+      <div id="lagMeta" style="color:#8b949e;font-size:11px;margin-top:8px;"></div>
+      <div id="lagChart" style="width:100%;height:300px;margin-top:12px;"></div>
+    </div>
+  </div>
+
+<script>
+let heatChart=null, rollChart=null, lagChart=null;
+async function getJson(url){ const r=await fetch(url); const d=await r.json(); if(!r.ok) throw new Error(d.detail||'분석 실패'); return d; }
+function loadIndices() {
+  getJson('/api/correlation/indices').then(d=>{
+    ['rollA','rollB','lagA','lagB'].forEach(id=>{
+      const sel=document.getElementById(id); sel.innerHTML='';
+      d.indices.forEach(x=>{ const o=document.createElement('option'); o.value=x.name; o.textContent=x.name; sel.appendChild(o); });
+    });
+    const comparison = d.indices.find(x=>x.name==='S&P 500')?.name || d.indices[1]?.name;
+    if (comparison) { document.getElementById('rollB').value=comparison; document.getElementById('lagB').value=comparison; }
+    loadMatrix(); loadRolling(); loadLeadLag();
+  });
+}
+function loadMatrix() {
+  getJson('/api/correlation/matrix').then(d=>{
+    const names=d.names, mat=d.matrix;
+    document.getElementById('matrixLegend').textContent = names.length + '개 지수 상관행렬';
+    if (heatChart) heatChart.dispose();
+    heatChart=echarts.init(document.getElementById('matrixChart'));
+    const data=[];
+    for(let i=0;i<names.length;i++) for(let j=0;j<names.length;j++) data.push([j,i,mat[i][j],d.observations[i][j]]);
+    heatChart.setOption({
+      backgroundColor:'#161b22',tooltip:{position:'top',formatter:p=>names[p.value[1]]+' × '+names[p.value[0]]+' = '+p.value[2]+' (n='+p.value[3]+')'},
+      grid:{left:120,right:20,top:20,bottom:60},
+      xAxis:{type:'category',data:names,axisLabel:{rotate:45,color:'#8b949e',fontSize:10}},
+      yAxis:{type:'category',data:names,axisLabel:{color:'#8b949e',fontSize:10}},
+      visualMap:{min:-1,max:1,dimension:2,calculable:true,orient:'horizontal',left:'center',bottom:0,inRange:{color:['#f0883e','#161b22','#58a6ff']}},
+      series:[{type:'heatmap',data:data,label:{show:true,color:'#e6edf3',fontSize:9}}]
+    });
+  }).catch(e=>{ document.getElementById('matrixLegend').textContent=e.message; });
+}
+function loadRolling() {
+  const a=document.getElementById('rollA').value, b=document.getElementById('rollB').value;
+  getJson('/api/correlation/rolling?a='+encodeURIComponent(a)+'&b='+encodeURIComponent(b)+'&window=60').then(d=>{
+    if (rollChart) rollChart.dispose();
+    rollChart=echarts.init(document.getElementById('rollingChart'));
+    rollChart.setOption({
+      backgroundColor:'#161b22',tooltip:{trigger:'axis'},grid:{left:50,right:20,top:20,bottom:40},
+      xAxis:{type:'category',data:d.dates,axisLabel:{color:'#8b949e'}},
+      yAxis:{type:'value',min:-1,max:1,axisLabel:{color:'#8b949e'}},
+      series:[{name:a+' × '+b,type:'line',data:d.values,showSymbol:false,lineStyle:{width:1.5},markLine:{symbol:'none',data:[{yAxis:0}],lineStyle:{color:'#8b949e',type:'dashed'}}}]
+    });
+  }).catch(e=>{ document.getElementById('rollingChart').textContent=e.message; });
+}
+function loadLeadLag() {
+  const a=document.getElementById('lagA').value, b=document.getElementById('lagB').value;
+  getJson('/api/correlation/leadlag?a='+encodeURIComponent(a)+'&b='+encodeURIComponent(b)+'&max_lag=10').then(d=>{
+    const best=d.best;
+    document.getElementById('lagMeta').textContent = best
+      ? '최대 |r|: lag '+best.lag+', r='+best.correlation+', 근사 p='+best.p_value+' · '+d.interpretation
+      : d.interpretation;
+    if (lagChart) lagChart.dispose();
+    lagChart=echarts.init(document.getElementById('lagChart'));
+    lagChart.setOption({
+      backgroundColor:'#161b22',tooltip:{trigger:'axis'},grid:{left:50,right:20,top:20,bottom:40},
+      xAxis:{type:'category',data:d.lags.map(l=>l+'d'),axisLabel:{color:'#8b949e'}},
+      yAxis:{type:'value',axisLabel:{color:'#8b949e'}},
+      series:[{name:a+' × '+b,type:'bar',data:d.correlations,itemStyle:{color:p=>p.value>=0?'#58a6ff':'#f0883e'}}]
+    });
+  }).catch(e=>{ document.getElementById('lagMeta').textContent=e.message; });
+}
+loadIndices();
+</script>
+{% endblock %}
