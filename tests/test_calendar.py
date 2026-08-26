@@ -170,9 +170,12 @@ class DatabaseTests(TemporaryDatabaseTest):
         db.init_db()
         db.set_meta("sentinel", "present")
         source = db.DB_PATH
-        destination = backup.backup_database(Path(self.tempdir.name) / "backups")
+        # Backups are compressed by default, so the archive has to be
+        # expanded before it can be opened as a database.
+        archive = backup.backup_database(Path(self.tempdir.name) / "backups")
+        destination = backup.restore(archive, Path(self.tempdir.name) / "restored.db")
         self.assertTrue(source.exists())
-        self.assertTrue(destination.exists())
+        self.assertTrue(archive.exists())
         with sqlite3.connect(destination) as conn:
             self.assertEqual("ok", conn.execute("PRAGMA quick_check").fetchone()[0])
             self.assertEqual(

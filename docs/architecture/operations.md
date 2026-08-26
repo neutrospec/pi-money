@@ -76,11 +76,24 @@ curl --fail http://127.0.0.1:8077/api/health
 SQLite online backup API로 일관성 검사를 포함한 복사본을 만듭니다.
 
 ```bash
-uv run python -m app.backup
+uv run python -m app.backup                       # 백업 후 보존 정책 적용
 uv run python -m app.backup --destination /path/to/backup-volume
+uv run python -m app.backup --dry-run             # 정리 대상만 확인
+uv run python -m app.backup --prune-only          # 새 백업 없이 정리만
+uv run python -m app.backup --no-compress         # 평문 .db 로 저장
 ```
 
-기본 위치는 `data/backups/money-<UTC timestamp>.db`입니다. 자동 삭제는 하지 않습니다. 보존 주기는 homelab 백업 정책에서 정합니다.
+기본 위치는 `data/backups/money-<UTC timestamp>.db.gz`이며 gzip으로 약 7.5배 압축됩니다. 무결성 검사는 압축 전 평문 사본에 대해 수행합니다.
+
+보존은 계층 + 용량 상한입니다. 최근 3개, 주당 1개씩 4주, 월당 1개씩 6개월을 유지하고, 총 20GB를 넘으면 오래된 것부터 정리합니다. 가장 최근 백업은 예산을 초과해도 지우지 않습니다. 값은 `BACKUP_KEEP_RECENT`·`BACKUP_KEEP_WEEKLY`·`BACKUP_KEEP_MONTHLY`·`BACKUP_MAX_TOTAL_MB`·`BACKUP_COMPRESS`로 조정합니다.
+
+DB는 KRX `all` 범위에서 연 5~6GB로 자랍니다. 압축 후 사본당 약 0.8GB이므로 기본 정책의 최대 13개 사본이 상한 20GB 안에 들어옵니다.
+
+압축본은 복구 전에 풀어야 합니다.
+
+```bash
+uv run python -m app.backup --restore data/backups/money-<stamp>.db.gz --into /tmp/check.db
+```
 
 복구 전에는 서버를 중지하고 원본 DB를 별도 보존합니다. 먼저 임시 경로에서 다음처럼 검사한 후 운영 경로 교체를 결정합니다.
 
