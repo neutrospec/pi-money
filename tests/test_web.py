@@ -205,6 +205,71 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class PageContentTests(unittest.TestCase):
+    """A page returning 200 is not a page that rendered correctly.
+
+    The calendar once shipped showing nav-group names where dates belonged,
+    because a `{% set %}` in the layout shadowed the route's own context
+    variable. Status codes and template-tag checks both passed.
+    """
+
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.original_path = db.DB_PATH
+        db.DB_PATH = Path(self.tempdir.name) / "money-test.db"
+        db.init_db()
+        db.replace_events([
+            {
+                "date": "2026-08-26", "time": "21:30", "country": "US",
+                "title": "미국 GDP", "impact": "high",
+                "note": "2분기 2차 추정치", "source": "curated",
+            },
+            {
+                "date": "2026-08-27", "time": None, "country": "KR",
+                "title": "한국은행 금통위", "impact": "high",
+                "note": "", "source": "curated",
+            },
+        ])
+
+    def tearDown(self):
+        db.DB_PATH = self.original_path
+        self.tempdir.cleanup()
+
+    def _body(self, path):
+        with patch.dict(os.environ, {"MONEY_DISABLE_SCHEDULER": "1"}):
+            with _client() as client:
+                return client.get(path).text
+
+    def test_the_calendar_groups_events_under_their_dates(self):
+        from datetime import date
+        from unittest.mock import patch as mpatch
+
+        with mpatch("app.main.kst_today", return_value=date(2026, 8, 26)):
+            body = self._body("/calendar")
+        self.assertIn("2026-08-26", body)
+        self.assertIn("미국 GDP", body)
+        self.assertIn("한국은행 금통위", body)
+        # Nav-group keys must never appear as if they were calendar headings.
+        for token in ("stocks", "indices", "correlation", "spillover"):
+            self.assertNotIn(
+                f'>{token}<', body,
+                f"nav group '{token}' leaked into the calendar body",
+            )
+
+    def test_the_layout_does_not_shadow_a_route_context_variable(self):
+        import re as _re
+
+        layout = Path("app/templates/base.html").read_text()
+        assigned = set(_re.findall(r"{%\s*set\s+([a-z_]+)\s*=", layout))
+        # Names a route hands to a template. A layout-level `set` of any of
+        # these silently replaces the page's own data.
+        route_context = {
+            "groups", "next_event", "today", "end", "situation",
+            "keys", "cats", "active",
+        }
+        self.assertEqual(set(), assigned & route_context)
+
+
 class InstrumentSearchTests(unittest.TestCase):
     """A search must surface what was asked for, not what sorts first."""
 
