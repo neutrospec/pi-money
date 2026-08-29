@@ -121,6 +121,126 @@ class ContingencyTests(TemporaryDatabaseTest):
         self.assertEqual((1, 1), (table["hit"], table["false_alarm"]))
 
 
+class CalendarTests(TemporaryDatabaseTest):
+    """Two markets, two calendars. Grading one against the other loses days."""
+
+    def test_the_replay_calendar_is_the_union_of_both_benchmarks(self):
+        db.replace_index_points("^KS11", [
+            {"date": "2026-01-01", "value": 1.0},
+            {"date": "2026-01-02", "value": 1.0},
+        ])
+        db.replace_index_points("^GSPC", [
+            {"date": "2026-01-02", "value": 1.0},
+            {"date": "2026-01-05", "value": 1.0},   # KRX holiday
+        ])
+        self.assertEqual(
+            ["2026-01-01", "2026-01-02", "2026-01-05"],
+            backtest.replay_calendar("2026-01-01", "2026-01-31"),
+        )
+
+    def test_a_day_the_benchmark_did_not_trade_is_counted_not_dropped(self):
+        # This is how the US mismatch hid: `if row["date"] in outcomes` is a
+        # silent filter, so 17 verdicts became 16 rows with nothing saying why.
+        rows = [{"date": f"2026-01-{day:02d}", "korea_regime": "risk_off"}
+                for day in (1, 2, 3)]
+        outcomes = {"2026-01-01": {"drawdown_pct": -10.0, "return_pct": -10.0}}
+        table = backtest.contingency(rows, outcomes, field="korea_regime")
+        self.assertEqual((1, 2), (table["days"], table["ungraded"]))
+        grouped = backtest.conditional(rows, outcomes, field="korea_regime")
+        self.assertEqual(2, grouped["risk_off"]["ungraded"])
+
+
+class StructureTests(unittest.TestCase):
+    """Measuring what the classifier is, without changing it."""
+
+    def rows(self, components):
+        return [{"date": f"2026-01-{index + 1:02d}", "korea_regime": verdict,
+                 "korea_components": __import__("json").dumps(votes)}
+                for index, (verdict, votes) in enumerate(components)]
+
+    def test_a_component_that_cannot_vote_zero_is_named_degenerate(self):
+        rows = self.rows([
+            ("neutral", {"trend": 1, "credit": 0}),
+            ("risk_off", {"trend": -1, "credit": -1}),
+        ])
+        found = {item["key"]: item for item in backtest.structure(rows)["components"]}
+        self.assertTrue(found["trend"]["degenerate"])
+        self.assertFalse(found["credit"]["degenerate"])
+
+    def test_a_degenerate_component_negative_on_every_warning_is_a_gate(self):
+        # Not a vote: with the ratio rule the verdict cannot fire without it,
+        # so a nominal five-input composite is really gated on one.
+        rows = self.rows([
+            ("neutral", {"trend": 1, "credit": -1}),
+            ("risk_off", {"trend": -1, "credit": -1}),
+            ("risk_off", {"trend": -1, "credit": 0}),
+        ])
+        self.assertEqual(["trend"], backtest.structure(rows)["mandatory_gates"])
+
+    def test_a_component_negative_on_only_some_warnings_is_not_a_gate(self):
+        rows = self.rows([
+            ("risk_off", {"trend": -1}),
+            ("risk_off", {"trend": 1}),
+        ])
+        self.assertEqual([], backtest.structure(rows)["mandatory_gates"])
+
+    def test_the_negative_share_is_reported_per_year(self):
+        rows = [{"date": "2025-01-01", "korea_regime": "neutral",
+                 "korea_components": '{"volatility": 0}'},
+                {"date": "2026-01-01", "korea_regime": "risk_off",
+                 "korea_components": '{"volatility": -1}'}]
+        share = backtest.structure(rows)["negative_share_by_year"]
+        self.assertEqual({"2025": {"volatility": 0.0}, "2026": {"volatility": 100.0}},
+                         share)
+
+
+class PriceRuleTests(TemporaryDatabaseTest):
+    """The surrogate must be point-in-time, or the out-of-window test lies."""
+
+    def test_the_rule_uses_only_history_up_to_each_day(self):
+        from app import analysis
+
+        # A long flat run then a crash: before the crash the rule must not know
+        # about it, which is the whole point of testing outside the window.
+        span = max(analysis.KR_MIN_HISTORY["trend"],
+                   analysis.KR_DRAWDOWN_WINDOW,
+                   analysis.KR_MIN_HISTORY["drawdown"]) + 40
+        values = [100.0] * span + [60.0] * 20
+        from datetime import date, timedelta
+
+        start = date(2020, 1, 1)
+        db.replace_index_points("^KS11", [
+            {"date": (start + timedelta(days=offset)).isoformat(), "value": value}
+            for offset, value in enumerate(values)
+        ])
+        rows = backtest.price_rule(db.get_index_points("^KS11"))
+        flat = [row for row in rows if row["date"] < (start + timedelta(days=span)).isoformat()]
+        crashed = [row for row in rows if row["date"] >= (start + timedelta(days=span)).isoformat()]
+        self.assertTrue(flat and crashed)
+        self.assertFalse(any(row["warning"] for row in flat),
+                         "the rule saw a crash that had not happened yet")
+        self.assertTrue(any(row["warning"] for row in crashed))
+
+    def test_the_out_of_window_split_reports_both_sides_against_a_baseline(self):
+        from datetime import date, timedelta
+        from app import analysis
+
+        span = max(analysis.KR_MIN_HISTORY["trend"],
+                   analysis.KR_DRAWDOWN_WINDOW) + 60
+        start = date(2020, 1, 1)
+        db.replace_index_points("^KS11", [
+            {"date": (start + timedelta(days=offset)).isoformat(),
+             "value": 100.0 - offset * 0.01}
+            for offset in range(span + 40)
+        ])
+        report = backtest.out_of_window(horizon=5, boundary="2021-01-01")
+        for side in ("before", "after"):
+            # The baseline must always be present: a warning rate quoted
+            # without the unconditional rate says nothing.
+            self.assertIn("all_days_median_return", report[side])
+            self.assertIn("all_days_positive_pct", report[side])
+
+
 class ChurnTests(unittest.TestCase):
     def test_run_lengths_are_reported_not_just_a_change_count(self):
         rows = [{"korea_regime": name} for name in

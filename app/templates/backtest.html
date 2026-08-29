@@ -118,6 +118,86 @@
     </div>
   </div>
 
+  <div class="card">
+    <div class="card-title">이 분류기가 실제로 무엇인가
+      <span style="color:#8b949e;font-weight:400;font-size:12px;">고치지 않고 잰 것입니다</span></div>
+    {% if r.structure.mandatory_gates %}
+    <div style="border-left:2px solid #f85149;padding:6px 0 6px 12px;margin-bottom:12px;">
+      <div style="font-size:14px;font-weight:600;">필수 관문: {{ r.structure.mandatory_gates | join(', ') }}</div>
+      <div style="font-size:13px;color:#c9d1d9;margin-top:4px;">
+        이 구성요소는 0표를 낼 수 없고 모든 경고일에 −1이었습니다. 표를 던지는 게 아니라
+        <b>판정의 관문</b>입니다 — 이것이 −1이 아니면 판정이 나올 수 없습니다.
+        명목상 5입력 합성이 사실상 하나에 걸려 있다는 뜻입니다.
+      </div>
+    </div>
+    {% endif %}
+    <div class="scroll"><table>
+      <thead><tr><th>구성요소</th><th>−1</th><th>0</th><th>+1</th><th>−1 비율</th><th>0표 가능</th></tr></thead>
+      <tbody>
+      {% for c in r.structure.components %}
+      <tr>
+        <td>{{ c.key }}</td>
+        <td class="num">{{ c.votes['-1'] if c.votes['-1'] is defined else c.votes[-1] }}</td>
+        <td class="num">{{ c.votes['0'] if c.votes['0'] is defined else c.votes[0] }}</td>
+        <td class="num">{{ c.votes['1'] if c.votes['1'] is defined else c.votes[1] }}</td>
+        <td class="num">{{ c.negative_share }}%</td>
+        <td style="color:{% if c.degenerate %}#f85149{% else %}#8b949e{% endif %};">{{ '아니오' if c.degenerate else '예' }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+    <div style="font-size:12px;color:#8b949e;margin-top:10px;">연도별 −1 비율 — 대부분의 날 켜져 있는 신호는 신호가 아닙니다.</div>
+    <div class="scroll"><table>
+      <thead><tr><th>연도</th>{% for k in r.structure.components %}<th>{{ k.key }}</th>{% endfor %}</tr></thead>
+      <tbody>
+      {% for year, cells in r.structure.negative_share_by_year.items() %}
+      <tr><td>{{ year }}</td>
+        {% for c in r.structure.components %}
+        <td class="num" style="color:{% if cells[c.key] and cells[c.key] >= 80 %}#f85149{% elif cells[c.key] and cells[c.key] >= 50 %}#d29922{% endif %};">{{ cells[c.key] }}%</td>
+        {% endfor %}
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+  </div>
+
+  {% if r.out_of_window %}
+  <div class="card" style="border-left:3px solid #58a6ff;">
+    <div class="card-title">창 밖에서도 통하는가
+      <span style="color:#8b949e;font-weight:400;font-size:12px;">{{ r.out_of_window.rule }}</span></div>
+    <div style="font-size:13px;color:#c9d1d9;margin-bottom:10px;">{{ r.out_of_window.note }}</div>
+    <div class="scroll"><table>
+      <thead><tr><th>구간</th><th>경고일</th><th>경고일 수익 중앙</th><th>양수 비율</th><th>최악</th>
+        <th>전체일 중앙</th><th>전체일 양수</th></tr></thead>
+      <tbody>
+      {% for key, label in [('before','창 밖 (2006~2023)'), ('after','창 안 (2023-12~)')] %}
+      {% set d = r.out_of_window[key] %}
+      <tr>
+        <td>{{ label }}</td>
+        <td class="num">{{ d.warned }}</td>
+        <td class="num">{{ d.warned_median_return }}%</td>
+        <td class="num">{{ d.warned_positive_pct }}%</td>
+        <td class="num" style="color:#f85149;">{{ d.warned_worst }}%</td>
+        <td class="num" style="color:#8b949e;">{{ d.all_days_median_return }}%</td>
+        <td class="num" style="color:#8b949e;">{{ d.all_days_positive_pct }}%</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+    <div class="scroll" style="margin-top:10px;"><table>
+      <thead><tr><th>연도</th><th>경고일</th><th>수익 중앙</th><th>양수 비율</th><th>최악</th></tr></thead>
+      <tbody>
+      {% for year, d in r.out_of_window.by_year.items() %}{% if d.warned %}
+      <tr><td>{{ year }}</td><td class="num">{{ d.warned }}</td>
+        <td class="num">{{ d.warned_median_return }}%</td>
+        <td class="num" style="color:{% if d.warned_positive_pct < 50 %}#f85149{% endif %};">{{ d.warned_positive_pct }}%</td>
+        <td class="num">{{ d.warned_worst }}%</td></tr>
+      {% endif %}{% endfor %}
+      </tbody>
+    </table></div>
+  </div>
+  {% endif %}
+
   <div class="card" style="border-left:3px solid #d29922;">
     <div class="card-title">이 결과의 한계</div>
     <ul style="font-size:13px;color:#c9d1d9;line-height:1.8;margin:0;padding-left:20px;">
