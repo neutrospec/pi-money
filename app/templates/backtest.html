@@ -84,6 +84,32 @@
     </table></div>
   </div>
 
+  <div class="card" style="border-left:3px solid #f85149;">
+    <div class="card-title">합산이냐 층별이냐
+      <span style="color:#8b949e;font-weight:400;font-size:12px;">둘이 벌어지면 믿을 것은 층별입니다</span></div>
+    <div class="scroll"><table>
+      <thead><tr><th>기준</th><th>층</th><th>경고 있는 층</th><th>양수</th><th>가중 lift</th><th>단순평균 lift</th></tr></thead>
+      <tbody>
+        <tr><td>합산 (층 없음)</td><td class="num">1</td><td class="num">1</td><td class="num">—</td>
+          <td class="num" style="font-weight:700;">{{ r.contingency.lift }}</td><td class="num">—</td></tr>
+      {% for name in ['year','half','quarter'] %}{% set d = r.stratified[name] %}
+        <tr>
+          <td>{% if name=='year' %}연도별{% elif name=='half' %}반기별{% else %}분기별{% endif %}</td>
+          <td class="num">{{ d.strata }}</td><td class="num">{{ d.with_warnings }}</td>
+          <td class="num">{{ d.positive }}</td>
+          <td class="num" style="color:{% if d.weighted_lift and d.weighted_lift > 0 %}#3fb950{% else %}#f85149{% endif %};">{{ d.weighted_lift }}</td>
+          <td class="num" style="color:{% if d.unweighted_lift and d.unweighted_lift > 0 %}#3fb950{% else %}#f85149{% endif %};">{{ d.unweighted_lift }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+    <div style="font-size:12px;color:#c9d1d9;margin-top:10px;line-height:1.7;">{{ r.stratified.pooled_vs_stratified }}</div>
+    <div style="font-size:12px;color:#8b949e;margin-top:8px;">
+      증거 단위: 경고 에피소드 <b>{{ r.stratified.episodes.count }}개</b> (적중 포함 {{ r.stratified.episodes.with_a_hit }}개, 최장 {{ r.stratified.episodes.longest_days }}일).
+      {{ r.stratified.episodes.note }}
+    </div>
+  </div>
+
   <div class="card">
     <div class="card-title">임계 격자
       <span style="color:#8b949e;font-weight:400;font-size:12px;">선언값 하나가 결론을 지지 않도록</span></div>
@@ -110,11 +136,12 @@
       <div><span style="color:#8b949e;font-size:11px;">판정 전환</span><div style="font-weight:700;">{{ r.churn.changes }}회</div></div>
       <div><span style="color:#8b949e;font-size:11px;">한 판정 지속 중앙값</span><div style="font-weight:700;">{{ r.churn.median_run_days }}일</div></div>
       <div><span style="color:#8b949e;font-size:11px;">최단 / 최장</span><div style="font-weight:700;">{{ r.churn.shortest_run_days }} / {{ r.churn.longest_run_days }}일</div></div>
-      <div><span style="color:#8b949e;font-size:11px;">스트레스일 중 사전경고</span><div style="font-weight:700;">{{ r.timing.warned_within_horizon }}/{{ r.timing.stress_days }}</div></div>
-      <div><span style="color:#8b949e;font-size:11px;">선행 중앙값</span><div style="font-weight:700;">{{ r.timing.median_lead_days if r.timing.median_lead_days is not none else '—' }}일</div></div>
+      <div><span style="color:#8b949e;font-size:11px;">스트레스일 중 경고 중이던 날</span><div style="font-weight:700;">{{ r.timing.warned_on_the_day }}/{{ r.timing.stress_days }}</div></div>
+      <div><span style="color:#8b949e;font-size:11px;">그때 경고가 켜져 있던 일수 (중앙)</span><div style="font-weight:700;">{{ r.timing.run_age.median if r.timing.run_age.count else '—' }}일</div></div>
     </div>
     <div style="font-size:12px;color:#8b949e;margin-top:10px;">
       사흘마다 뒤집히는 분류기는 정확도와 무관하게 쓸 수 없습니다. 지속 일수가 정확도 숫자보다 그 점을 잘 말합니다.
+      {{ r.timing.note }}
     </div>
   </div>
 
@@ -187,7 +214,14 @@
   </div>
   {% endif %}
 
-  {% if r.out_of_window %}
+  {% if r.out_of_window and not r.out_of_window.available %}
+  <div class="card" style="border-left:3px solid #d29922;">
+    <div class="card-title">창 밖 검사 — 불가</div>
+    <div style="font-size:13px;color:#c9d1d9;">{{ r.out_of_window.reason }}</div>
+  </div>
+  {% endif %}
+
+  {% if r.out_of_window and r.out_of_window.available %}
   <div class="card" style="border-left:3px solid #58a6ff;">
     <div class="card-title">창 밖에서도 통하는가
       <span style="color:#8b949e;font-weight:400;font-size:12px;">{{ r.out_of_window.rule }}</span></div>

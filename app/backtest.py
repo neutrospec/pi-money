@@ -46,10 +46,12 @@ WINDOW_START = "2007-06-26"
 
 # The first day all five vote. Between the two dates the verdict stands on
 # three or four components with volatility pending, because kr_vkospi begins
-# 2010-01-04 and a distribution needs 60 observations. Those years are a
+# 2010-01-04 and a distribution needs 60 observations. This date moved once
+# already, from 2010-04-01, when a day-of-week bug in the KRX walk was fixed
+# and ~670 missing Fridays arrived. Those years are a
 # legitimate verdict under the classifier's own rule and a *different* verdict
 # from a five-component one, so results are segmented rather than pooled.
-FULL_WINDOW_START = "2010-04-01"
+FULL_WINDOW_START = "2010-03-16"
 
 # The benchmark each regime is evaluated against. A Korean verdict judged by
 # the S&P would be measuring the wrong market.
@@ -198,6 +200,100 @@ def contingency(verdicts: list[dict], outcomes: dict[str, dict], *,
     }
 
 
+STRATA = {
+    "year": lambda day: day[:4],
+    "half": lambda day: f"{day[:4]}H{1 if day[5:7] <= '06' else 2}",
+    "quarter": lambda day: f"{day[:4]}Q{(int(day[5:7]) - 1) // 3 + 1}",
+}
+
+
+def episodes(verdicts: list[dict], *, field: str) -> list[list[str]]:
+    """Contiguous runs of warning. The unit of evidence, and it is not the day.
+
+    Warnings run for months and outcome windows overlap twenty sessions, so
+    623 warned days are nowhere near 623 observations. Counting episodes is
+    what keeps a single 2008 run from reading as hundreds of independent
+    confirmations.
+    """
+    runs, previous = [], None
+    for row in verdicts:
+        if row[field] != WARNING:
+            previous = None
+            continue
+        if previous is None:
+            runs.append([])
+        runs[-1].append(row["date"])
+        previous = row["date"]
+    return runs
+
+
+def stratified(verdicts: list[dict], outcomes: dict[str, dict], *, field: str,
+               threshold: float = DRAWDOWN_PCT) -> dict:
+    """Lift measured inside each period, then combined — never pooled across.
+
+    This exists because the pooled number lied. Over 2007-2026 the pooled lift
+    was +13.8, which reads as "the warning roughly doubles the chance of
+    stress". It does not. Warnings concentrate in years whose unconditional
+    stress rate is two to four times the average — 164 warnings in 2008 when
+    46% of all days preceded a drawdown — so pooling those days with days from
+    calm years produces lift arithmetically even if the warning separates
+    nothing *within* any year. Compare each warning against the base rate of
+    the period it actually falls in and the effect collapses: +3.3 by year,
+    +0.6 by quarter, -1.2 by half-year, against +13.8 pooled.
+
+    A classifier that is switched on during bad years is not the same thing as
+    one that identifies bad days, and only this function can tell them apart.
+    """
+    out = {}
+    for name, bucket in STRATA.items():
+        rows = []
+        for label in sorted({bucket(row["date"]) for row in verdicts}):
+            subset = [row for row in verdicts if bucket(row["date"]) == label]
+            table = contingency(subset, outcomes, field=field, threshold=threshold)
+            if table["days"]:
+                rows.append({"stratum": label, **table})
+        warned = sum(row["warned"] for row in rows)
+        # Weighted by warnings, so a stratum contributes in proportion to how
+        # much of the claim rests on it. The unweighted mean is reported too:
+        # they disagree exactly when a few large strata carry everything.
+        lifted = [row for row in rows if row["lift"] is not None and row["warned"]]
+        out[name] = {
+            "strata": len(rows),
+            "with_warnings": len(lifted),
+            "positive": sum(1 for row in lifted if row["lift"] > 0),
+            "weighted_lift": (
+                round(sum(row["lift"] * row["warned"] for row in lifted) / warned, 1)
+                if warned else None
+            ),
+            "unweighted_lift": (
+                round(sum(row["lift"] for row in lifted) / len(lifted), 1)
+                if lifted else None
+            ),
+            "rows": rows if name == "year" else None,
+        }
+    runs = episodes(verdicts, field=field)
+    hit = [
+        run for run in runs
+        if any(outcomes.get(day, {}).get("drawdown_pct", 0) <= -threshold for day in run)
+    ]
+    out["episodes"] = {
+        "count": len(runs),
+        "with_a_hit": len(hit),
+        "longest_days": max((len(run) for run in runs), default=0),
+        "note": (
+            "증거의 단위는 날이 아니라 에피소드입니다. 경고는 몇 달씩 이어지고 "
+            "결과 창은 20세션씩 겹치므로, 경고일 수를 독립 관측 수로 읽으면 "
+            "한 번의 국면이 수백 번의 확인처럼 보입니다."
+        ),
+    }
+    out["pooled_vs_stratified"] = (
+        "합산 lift 는 '나쁜 해에 켜져 있었다'까지 점수로 쳐줍니다. "
+        "층별 lift 는 '그 해 안에서 나쁜 날을 골랐다'만 점수로 칩니다. "
+        "둘이 크게 벌어지면 믿을 것은 뒤쪽입니다."
+    )
+    return out
+
+
 def grid(verdicts: list[dict], symbol: str, *, field: str) -> list[dict]:
     """The full threshold grid, so no single declared pair carries the result."""
     out = []
@@ -289,31 +385,49 @@ def churn(verdicts: list[dict], *, field: str) -> dict:
 
 def timing(verdicts: list[dict], outcomes: dict[str, dict], *, field: str,
            threshold: float = DRAWDOWN_PCT) -> dict:
-    """When a warning arrives relative to the stress it was warning about.
+    """How long the warning had already been on when the stress registered.
 
-    A warning on the day the drawdown is already underway is not the same
-    finding as one that arrives a week early, and a single accuracy number
-    cannot tell them apart.
+    An earlier version searched back only ``HORIZON_DAYS`` and reported the
+    median of what it found. The lead could then never exceed 20 by
+    construction, and 62% of cases sat exactly at 20 — median equal to maximum
+    equal to the cap is the signature of a censored measure being read as a
+    central tendency. It looked like "the warning arrives 20 days early"; it
+    meant "the search stopped there".
+
+    This measures to the start of the warning run the day belongs to, with no
+    cap, and reports the distribution rather than one number. A long lead here
+    is not prescience: it says the verdict had been risk_off for months, which
+    is what a verdict does inside a bear market.
     """
     days = [row["date"] for row in verdicts]
-    warned = {row["date"] for row in verdicts if row[field] == WARNING}
     index = {day: position for position, day in enumerate(days)}
-    leads = []
+    warned = {row["date"] for row in verdicts if row[field] == WARNING}
+    # For each day, how long the current warning run has been going.
+    running, age = {}, None
+    for day in days:
+        age = (age + 1 if age is not None else 0) if day in warned else None
+        if age is not None:
+            running[day] = age
+    leads, unwarned = [], 0
     for day in days:
         outcome = outcomes.get(day)
         if not outcome or outcome["drawdown_pct"] > -threshold:
             continue
-        # First warning at or before this day, within the same horizon.
-        window = days[max(0, index[day] - HORIZON_DAYS):index[day] + 1]
-        earlier = [item for item in window if item in warned]
-        leads.append(index[day] - index[earlier[0]] if earlier else None)
-    covered = [value for value in leads if value is not None]
+        if day in running:
+            leads.append(running[day])
+        else:
+            unwarned += 1
     return {
-        "stress_days": len(leads),
-        "warned_within_horizon": len(covered),
-        "unwarned": len(leads) - len(covered),
-        "median_lead_days": round(median(covered), 1) if covered else None,
-        "max_lead_days": max(covered) if covered else None,
+        "stress_days": len(leads) + unwarned,
+        "warned_on_the_day": len(leads),
+        "unwarned": unwarned,
+        # Sessions the warning had already been on. Not a forecast horizon.
+        "run_age": _spread([float(value) for value in leads]),
+        "note": (
+            "이 값은 경고가 며칠 앞서 왔는지가 아니라, 스트레스가 잡힌 시점에 "
+            "경고가 이미 며칠째 켜져 있었는지입니다. 약세장 안에서 판정이 계속 "
+            "켜져 있는 것을 선행으로 읽으면 안 됩니다."
+        ),
     }
 
 
@@ -366,11 +480,13 @@ def out_of_window(symbol: str = "^KS11", horizon: int = HORIZON_DAYS,
                   boundary: str = WINDOW_START) -> dict:
     """Run the price-only rule over twenty years and split at the window edge.
 
-    The full classifier cannot go back before 2023-12-18 because kr_vkospi
-    history begins 2023-10-10. The rule it collapses into can, and this is the
-    one test available today that distinguishes "a real mean-reversion
-    regularity" from "what deep-drawdown days happened to do during a +167%
-    stretch". If the effect lives only after the boundary, it is the window.
+    This was the module's one designed defence against "the finding is a
+    property of the window", and the 2026-08-30 backfill spent it. Before the
+    backfill the classifier could not replay past 2023-12-18, so 2006-2023 was
+    a genuine holdout for the price rule. Extending the replay to 2007 turned
+    the holdout into the sample. The function now reports that it has nothing
+    to say rather than returning zeros, because an empty ``before`` bucket
+    reads as "no effect out of sample" and means "no out of sample".
     """
     points = db.get_index_points(symbol)
     outcomes = forward(symbol, horizon)
@@ -399,7 +515,26 @@ def out_of_window(symbol: str = "^KS11", horizon: int = HORIZON_DAYS,
 
     before = [row for row in rows if row["date"] < boundary]
     after = [row for row in rows if row["date"] >= boundary]
+    if not before:
+        # The backfill bought a nineteen-year window by spending the holdout.
+        # The price rule needs 252 sessions of peak window plus 200 of trend
+        # before it can speak, and ^KS11 here starts 2006-09-04, so there is no
+        # longer any history outside the replay window to test against.
+        # Reporting empty statistics would read as "no effect out of sample"
+        # when it means "no out of sample".
+        return {
+            "available": False,
+            "symbol": symbol, "boundary": boundary, "rule": None,
+            "reason": (
+                f"{boundary} 이전에 이 규칙이 낼 수 있는 관측이 없습니다. "
+                f"백필이 창을 19년으로 넓히면서 홀드아웃을 다 써버렸고 "
+                f"^KS11 이력 자체가 {points[0]['date']}부터입니다. 되살리려면 "
+                f"KRX 에서 2006년 이전 지수를 직접 받아야 합니다 — Yahoo 는 "
+                f"20년 롤링이라 닿지 않습니다."
+            ),
+        }
     return {
+        "available": True,
         "symbol": symbol,
         "horizon_days": horizon,
         "boundary": boundary,
@@ -544,6 +679,9 @@ def report(field: str = "korea_regime") -> dict:
         "declared": {"drawdown_pct": DRAWDOWN_PCT, "horizon_days": HORIZON_DAYS,
                      "warning": WARNING},
         "contingency": contingency(verdicts, outcomes, field=field),
+        # Always beside the pooled number, never instead of it — the gap
+        # between them is the finding.
+        "stratified": stratified(verdicts, outcomes, field=field),
         "grid": grid(verdicts, symbol, field=field),
         "conditional": conditional(verdicts, outcomes, field=field),
         "churn": churn(verdicts, field=field),

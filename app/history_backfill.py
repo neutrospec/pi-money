@@ -126,9 +126,14 @@ def deepen_krx_index(key: str = "kr_vkospi", *, start: str = KRX_INDEX_FROM,
     day = first
     total = (last - first).days
     while day < last:
-        iso = day.isoformat()
+        # Read the cursor's own weekday before advancing it. Advancing first
+        # and then testing ``day.weekday()`` tests *tomorrow*, which skips
+        # every Friday (Saturday is 5) and requests every Sunday instead. That
+        # is not a small loss: it took out 832 sessions and left a systematic
+        # day-of-week hole that no total-count check would reveal.
+        iso, weekday = day.isoformat(), day.weekday()
         day += timedelta(days=1)
-        if iso in held or day.weekday() >= 5:
+        if weekday >= 5 or iso in held:
             continue
         try:
             rows = krx.fetch_dataset(spec, iso)

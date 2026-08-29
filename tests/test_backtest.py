@@ -234,11 +234,32 @@ class PriceRuleTests(TemporaryDatabaseTest):
             for offset in range(span + 40)
         ])
         report = backtest.out_of_window(horizon=5, boundary="2021-01-01")
+        if not report["available"]:
+            # No history before the boundary. That must be said outright, not
+            # rendered as zeros — an empty `before` bucket reads as "no effect
+            # out of sample" when it means "no out of sample".
+            self.assertTrue(report["reason"].strip())
+            return
         for side in ("before", "after"):
             # The baseline must always be present: a warning rate quoted
             # without the unconditional rate says nothing.
             self.assertIn("all_days_median_return", report[side])
             self.assertIn("all_days_positive_pct", report[side])
+
+    def test_a_missing_holdout_is_reported_rather_than_rendered_as_zeros(self):
+        from datetime import date, timedelta
+        from app import analysis
+
+        span = analysis.KR_DRAWDOWN_WINDOW + analysis.KR_MIN_HISTORY["trend"] + 60
+        start = date(2020, 1, 1)
+        db.replace_index_points("^KS11", [
+            {"date": (start + timedelta(days=offset)).isoformat(),
+             "value": 100.0 - offset * 0.01}
+            for offset in range(span)
+        ])
+        report = backtest.out_of_window(horizon=5, boundary="2020-01-02")
+        self.assertFalse(report["available"])
+        self.assertIn("홀드아웃", report["reason"])
 
 
 class ChurnTests(unittest.TestCase):

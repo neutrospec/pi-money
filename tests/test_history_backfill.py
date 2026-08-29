@@ -104,6 +104,25 @@ class KrxIndexBackfillTests(TemporaryDatabaseTest):
             {p["date"]: p["value"] for p in db.get_indicator_points("kr_vkospi")}["2015-06-15"],
         )
 
+    def test_every_weekday_is_requested_and_no_weekend_day_is(self):
+        # The walk once advanced its cursor before testing the weekday, so it
+        # tested tomorrow: every Friday was skipped and every Sunday fetched.
+        # A total-count check would not have shown it — only the day-of-week
+        # profile does, which is why this test asserts the profile.
+        from datetime import date
+
+        asked = []
+
+        def spy(spec, day):
+            asked.append(day)
+            return []
+
+        with patch("app.collectors.krx.fetch_dataset", side_effect=spy):
+            history_backfill.deepen_krx_index(start="2015-06-01", end="2015-06-29")
+        weekdays = {date.fromisoformat(day).weekday() for day in asked}
+        self.assertEqual({0, 1, 2, 3, 4}, weekdays)
+        self.assertEqual(20, len(asked), "four full weeks of weekdays")
+
     def test_a_failing_day_is_counted_rather_than_aborting_the_walk(self):
         def flaky(spec, day):
             if day == "2015-06-16":
