@@ -38,7 +38,7 @@ Not reconstructible, and this module says so rather than pretending:
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 from app import db
 from app.timeutil import kst_today
@@ -63,6 +63,8 @@ UNAVAILABLE = "unavailable"     # nothing survives the filter
 # the US close — nine hours of the future waved through. That was 25 rows on a
 # single day, all of them US sessions that had not happened yet in Korea.
 UTC_SUFFIX = "+00:00"
+# KST midnight, as the hour of the UTC day it falls on.
+KST_CUT = "15:00:00"
 
 
 def _instant(day: str) -> str:
@@ -328,6 +330,20 @@ def leak(as_of: str) -> dict:
     }
 
 
+def _kst_day(instant: str) -> str:
+    """The KST day an arrival belongs to, from a stored UTC instant.
+
+    Not ``instant[:10]``. The replay cut for day D is 15:00Z on D, so anything
+    received later that UTC day is already tomorrow in Seoul — reporting its
+    UTC date would say a series is replayable one day before it is. This
+    ledger holds 411 rows past 15:00Z, so it is the common case, not an edge.
+    """
+    day = instant[:10]
+    if instant[11:19] <= KST_CUT:
+        return day
+    return (date.fromisoformat(day) + timedelta(days=1)).isoformat()
+
+
 def readiness(keys: list[str] | None = None, *, today: date | None = None) -> dict:
     """From which date each series can be replayed — a fact, not a projection.
 
@@ -353,7 +369,7 @@ def readiness(keys: list[str] | None = None, *, today: date | None = None) -> di
         needed = normalize.minimum_for(key)
         # The instant depth first reached the minimum is simply the arrival of
         # the Nth observation. Everything from that day onward replays.
-        reached = arrivals[needed - 1][:10] if len(arrivals) >= needed else None
+        reached = _kst_day(arrivals[needed - 1]) if len(arrivals) >= needed else None
         rows.append({
             "key": key,
             "observations": len(arrivals),
@@ -362,7 +378,7 @@ def readiness(keys: list[str] | None = None, *, today: date | None = None) -> di
             # backfilled this morning is the second but was not yesterday.
             "replayable_from": reached,
             "usable_today": bool(reached and reached <= when.isoformat()),
-            "first_arrival": arrivals[0][:10] if arrivals else None,
+            "first_arrival": _kst_day(arrivals[0]) if arrivals else None,
             "note": (
                 f"{reached}부터 재생 가능합니다" if reached
                 else f"관측 {len(arrivals)}개 — {needed}개에 아직 못 미칩니다"

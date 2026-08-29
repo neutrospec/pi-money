@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 from app import analysis, db, market_metrics, normalize, pit
@@ -81,6 +81,49 @@ class VintageCutTests(TemporaryDatabaseTest):
         ledger = pit.Ledger("2026-08-01", pit.VINTAGE)
         self.assertEqual([], ledger.indicator("us_vix"))
         self.assertEqual(pit.UNAVAILABLE, ledger.provenance["us_vix"])
+
+
+class ReadinessTests(TemporaryDatabaseTest):
+    """When a series became replayable is a KST date, read off a UTC instant."""
+
+    def test_an_arrival_after_the_kst_cut_belongs_to_the_next_day(self):
+        # The replay cut for day D is 15:00Z on D. A row received at 16:00Z is
+        # excluded from D's replay, so reporting its UTC date as the day the
+        # series became replayable is a day early — and 411 rows in this
+        # ledger arrived past 15:00Z.
+        self.assertEqual("2026-08-27", pit._kst_day("2026-08-27T14:59:00+00:00"))
+        self.assertEqual("2026-08-27", pit._kst_day("2026-08-27T15:00:00+00:00"))
+        self.assertEqual("2026-08-28", pit._kst_day("2026-08-27T16:00:00+00:00"))
+
+    def test_the_reported_date_is_one_a_replay_actually_succeeds_on(self):
+        for day in range(1, 4):
+            self.vintage("us_vix", f"2026-08-{day:02d}", float(day),
+                         f"2026-08-27T16:00:00.{day:06d}+00:00")
+        report = pit.readiness(["us_vix"], today=date(2026, 8, 29))
+        row = report["series"][0]
+        self.assertEqual(3, row["observations"])
+        # Three observations against a minimum of sixty: short, and reported
+        # as short rather than given a date it cannot honour.
+        self.assertIsNone(row["replayable_from"])
+        self.assertEqual(["us_vix"], report["waiting"])
+        # Arrived 16:00Z on the 27th, which is already the 28th in Seoul.
+        self.assertEqual("2026-08-28", row["first_arrival"])
+
+    def test_a_series_deep_enough_reports_the_day_its_nth_row_arrived(self):
+        needed = 60
+        start = date(2026, 5, 1)
+        for step in range(needed):
+            # Distinct observation dates — the ledger counts dates, not rows.
+            self.vintage("us_vix", (start + timedelta(days=step)).isoformat(),
+                         float(step),
+                         f"2026-08-2{step % 3 + 1}T09:00:00.{step:06d}+00:00")
+        report = pit.readiness(["us_vix"], today=date(2026, 8, 29))
+        row = report["series"][0]
+        self.assertTrue(row["replayable_from"])
+        self.assertTrue(row["usable_today"])
+        depth = len(db.get_indicator_vintage_points(
+            "us_vix", as_of=pit._instant(row["replayable_from"])))
+        self.assertGreaterEqual(depth, needed, "reported date cannot replay")
 
 
 class ObservationDateTests(TemporaryDatabaseTest):
