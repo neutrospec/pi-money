@@ -14,7 +14,7 @@ import numpy as np
 
 from app import (
     analysis, backup, correlation, db, history_recovery, market_metrics,
-    dashboard, explain, normalize, registry, sentiment, spillover,
+    brief, dashboard, explain, normalize, registry, sentiment, spillover,
 )
 from app.collectors import curated, indicators, krx
 from app.scheduler import Collector, Scheduler
@@ -775,6 +775,108 @@ class LearningLayerTests(TemporaryDatabaseTest):
                 self.assertFalse(loaded["missing"])
                 self.assertIn("#", loaded["body"])
         self.assertIsNone(explain.guide("does-not-exist"))
+
+
+class BriefTests(TemporaryDatabaseTest):
+    """What moved, what disagrees, and what would change the verdict."""
+
+    @staticmethod
+    def _series(values: list[float], step: int = 1) -> list[dict]:
+        today = kst_today()
+        return [
+            {"date": (today - timedelta(days=(len(values) - 1 - i) * step)).isoformat(),
+             "value": float(value)}
+            for i, value in enumerate(values)
+        ]
+
+    def test_movement_measures_each_end_against_the_window_of_its_own_time(self):
+        """The earlier reading is scored against what was known then.
+
+        Dropping the old value into today's window is a different number: the
+        window has since absorbed everything that happened after, so the past
+        is judged by evidence it did not have.
+        """
+        values = [float(i) for i in range(100)] + [1000.0]
+        points = self._series(values)
+        moved = normalize.movement(points, window=100, lookback_days=7, minimum=60)
+
+        past = [item["value"] for item in points[:-1]
+                if item["date"] <= moved["from_date"]]
+        own_window = normalize.percentile(past[-1], past[-100:])
+        todays_window = normalize.percentile(past[-1], values[-100:])
+
+        self.assertNotEqual(own_window, todays_window)   # 선택이 값을 바꿉니다
+        self.assertEqual(own_window, moved["then"])
+        self.assertEqual(
+            normalize.percentile(values[-1], values[-100:]), moved["now"]
+        )
+
+    def test_lookback_is_calendar_days_so_frequencies_are_comparable(self):
+        """Five observations is a week for a daily series and five weeks for a
+        weekly one; comparing them on one list puts last month beside today."""
+        weekly = self._series([float(i) for i in range(80)], step=7)
+        moved = normalize.movement(weekly, lookback_days=7, minimum=60)
+        self.assertEqual(
+            7,
+            (date.fromisoformat(moved["as_of"])
+             - date.fromisoformat(moved["from_date"])).days,
+        )
+
+    def test_a_level_that_only_rises_does_not_register_as_a_mover(self):
+        """Saturation falls off this measure without needing a rule for it."""
+        climbing = self._series([float(i) for i in range(300)])
+        moved = normalize.movement(climbing, lookback_days=7, minimum=60)
+        self.assertLess(abs(moved["change"]), brief.MOVER_THRESHOLD)
+
+    def test_flip_conditions_are_arithmetic_on_the_votes_already_cast(self):
+        regime = {
+            "score": -1,
+            "components": [
+                {"key": "a", "label": "A", "score": 1, "percentile": 100.0},
+                {"key": "b", "label": "B", "score": 1, "percentile": 90.0},
+                {"key": "c", "label": "C", "score": -1, "percentile": 10.0},
+                {"key": "d", "label": "D", "score": -1, "percentile": 5.0},
+                {"key": "e", "label": "E", "score": -1, "percentile": 12.0},
+            ],
+        }
+        flips = brief._flip_conditions(regime)
+        reachable = {item["verdict"] for item in flips if not item.get("unreachable")}
+        # -1/5 is neutral; one vote moving to -1 makes -3/5 = -0.6 → risk_off.
+        self.assertIn("risk_off", reachable)
+        # No single vote can reach +2.5, and the brief says so rather than
+        # staying silent about it.
+        self.assertNotIn("risk_on", reachable)
+        self.assertTrue(
+            any(item.get("unreachable") and item["verdict"] == "risk_on"
+                for item in flips)
+        )
+        gap = next(item for item in flips if item["key"] == "a")
+        self.assertEqual(
+            round(analysis.KR_RISK_OFF_PERCENTILE - 100.0, 1), gap["percentile_gap"]
+        )
+
+    def test_a_section_with_nothing_in_it_is_omitted(self):
+        """A brief with every heading always filled is a brief nobody reads."""
+        agreeing = {"regime": "neutral", "score": 0, "components": [
+            {"key": "a", "label": "A", "score": 0, "detail": "-"},
+        ], "pending": []}
+        quiet_gauge = {"components": [
+            {"key": "x", "label": "X", "score": 50, "detail": "-"},
+            {"key": "y", "label": "Y", "score": 55, "detail": "-"},
+        ], "pending": []}
+        self.assertEqual(
+            [], brief.disagreements(agreeing, dict(agreeing), quiet_gauge)
+        )
+
+    def test_evidence_that_did_not_vote_is_listed_not_counted_as_neutral(self):
+        korea = {"regime": "neutral", "score": 0, "components": [],
+                 "pending": [{"key": "volatility", "label": "변동성",
+                              "reason": "이력 부족"}]}
+        gauge = {"components": [], "pending": [{"key": "breadth", "reason": "승인 대기"}]}
+        rows = brief.unresolved(korea, gauge)
+        self.assertEqual(2, len(rows))
+        self.assertEqual("한국 국면", rows[0]["source"])
+        self.assertIn("이력 부족", rows[0]["reason"])
 
 
 class KoreaRegimeTests(TemporaryDatabaseTest):
@@ -1853,7 +1955,7 @@ class McpTests(TemporaryDatabaseTest):
         db.init_db()
         names = {tool.name for tool in anyio.run(mcp_server.mcp.list_tools)}
         self.assertEqual({
-            "market_health", "market_situation", "market_coverage",
+            "market_health", "market_brief", "market_situation", "market_coverage",
             "market_events", "market_quotes",
             "market_indices", "market_indicator_list", "market_indicator",
             "market_universe", "market_correlation", "market_spillover",

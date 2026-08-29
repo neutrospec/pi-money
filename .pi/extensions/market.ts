@@ -545,6 +545,46 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
+	// 브리핑
+	pi.registerTool({
+		name: "market_brief",
+		label: "브리핑",
+		description:
+			"이번 주 자기 분포에서 이동한 계열, 지금 실제로 어긋나는 판정들, 그리고 어느 구성요소가 바뀌면 국면 판정이 달라지는지를 조회한다. 뒤집기 조건은 이미 던져진 표에 대한 산술이며 예측도 권유도 아니다.",
+		parameters: Type.Object({}),
+		async execute() {
+			const d = await apiGet("/api/brief");
+			if (d.error) return { content: [{ type: "text", text: d.error }] };
+			const kr = d.korea_regime || {}, us = d.regime || {}, g = d.sentiment || {};
+			const lines: string[] = [
+				`한국 ${kr.regime} (순점수 ${kr.score}, ${kr.component_count}/${kr.component_total}) · 미국 ${us.regime} (순점수 ${us.score}) · 심리 ${g.score} ${g.band_label}`,
+			];
+			if ((d.disagreements || []).length) {
+				lines.push("", "어긋나는 것:");
+				d.disagreements.forEach((x: any) => lines.push(`  [${x.kind}] ${x.title} — ${x.detail}`));
+			}
+			if ((d.flip_conditions || []).length) {
+				lines.push("", "무엇이 바뀌면 판정이 달라지나:");
+				d.flip_conditions.forEach((f: any) => lines.push(
+					f.unreachable ? `  ${f.detail}`
+						: `  ${f.label}: ${f.from_score} → ${f.to_score} 이면 ${f.verdict}` +
+						  (f.percentile_gap != null ? ` (백분위 ${f.percentile} → ${Math.round(f.percentile + f.percentile_gap)})` : "")));
+			}
+			if ((d.movers || []).length) {
+				lines.push("", `최근 ${d.lookback_days}일 분포 이동:`);
+				d.movers.forEach((m: any) => lines.push(
+					`  ${m.label} ${m.then}→${m.now} (${m.change > 0 ? "+" : ""}${m.change}p, ${m.from_date}~${m.as_of})` +
+					((m.watch || []).length ? ` · 함께 볼 것: ${m.watch.map((w: any) => w.label).join(", ")}` : "")));
+			}
+			if ((d.unresolved || []).length) {
+				lines.push("", "투표하지 않은 근거:");
+				d.unresolved.forEach((u: any) => lines.push(`  [${u.source}] ${u.label} — ${u.reason}`));
+			}
+			lines.push("", `주의: ${d.warning}`);
+			return { content: [{ type: "text", text: lines.join("\n") }], details: d };
+		},
+	});
+
 	// 시장 상태 분류
 	pi.registerTool({
 		name: "market_regime",

@@ -18,8 +18,9 @@ from app import db
 
 
 PAGES = (
-    "/", "/rates", "/charts", "/stocks", "/indices", "/markets",
+    "/", "/brief", "/rates", "/charts", "/stocks", "/indices", "/markets",
     "/analysis", "/correlation", "/spillover", "/data", "/manage", "/calendar",
+    "/learn",
 )
 
 # Endpoints no page fetches, each for a stated reason. Keeping the reason in
@@ -27,6 +28,8 @@ PAGES = (
 # a forgotten endpoint goes to be forgotten again.
 UI_EXEMPT = {
     "/api/situation": "the front page renders this payload server-side",
+    "/api/brief": "the brief page renders this payload server-side; the "
+                  "endpoint exists because agents consume the briefing too",
     "/api/analysis/regime": "included in the server-rendered situation payload",
     "/api/analysis/sentiment": "included in the server-rendered situation payload",
     "/api/events": "the calendar page renders events server-side",

@@ -118,6 +118,66 @@ def position(
     }
 
 
+LOOKBACK_DAYS = 7
+
+
+def movement(
+    points: list[dict] | None,
+    *,
+    window: int | None = TRAILING_WINDOW,
+    lookback_days: int = LOOKBACK_DAYS,
+    minimum: int = MIN_OBSERVATIONS,
+) -> dict | None:
+    """How far this series moved within its own distribution, in points.
+
+    The lookback is calendar days, not observations: five observations is a
+    week for a daily series and five weeks for a weekly one, which would put
+    last month's news beside this week's on the same list.
+
+    Both ends are measured against the window *as it stood then*, not today's
+    window with an old value dropped into it. Reusing one window makes the two
+    readings share almost all their history and understates every move.
+
+    A level that only travels one way barely moves in distribution terms, so
+    saturated series fall off this measure without needing a rule.
+    """
+    from datetime import date, timedelta
+
+    observations = list(points or [])
+    if len(observations) < minimum + 1:
+        return None
+    try:
+        cutoff = (
+            date.fromisoformat(observations[-1]["date"])
+            - timedelta(days=lookback_days)
+        ).isoformat()
+    except (KeyError, TypeError, ValueError):
+        return None
+    earlier = [item for item in observations[:-1] if item["date"] <= cutoff]
+    if len(earlier) < minimum:
+        return None
+    values = [item["value"] for item in observations]
+    past = [item["value"] for item in earlier]
+    now = percentile(values[-1], values if window is None else values[-window:])
+    then = percentile(past[-1], past if window is None else past[-window:])
+    return {
+        "now": now,
+        "then": then,
+        "change": round(now - then, 1),
+        "lookback_days": lookback_days,
+        "as_of": observations[-1]["date"],
+        "from_date": earlier[-1]["date"],
+    }
+
+
+def movement_for(key: str, *, lookback_days: int = LOOKBACK_DAYS) -> dict | None:
+    return movement(
+        db.get_indicator_points(key),
+        window=window_for(key),
+        lookback_days=lookback_days,
+    )
+
+
 def position_for(key: str) -> dict:
     """The distribution reading for a catalogued indicator."""
     catalog = indicators.catalog()

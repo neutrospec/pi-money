@@ -32,6 +32,7 @@ args: --directory /Users/nobocop/projects/money run python -m app.mcp_server
 | 도구 | 기능 |
 |------|------|
 | `market_health` | DB 무결성·마지막 수집·partial/error 수집기 |
+| `market_brief` | 이번 주 분포 이동·불일치·판정을 뒤집는 조건(투표 산술) |
 | `market_events` | KST 기준 향후 공식 경제 일정 |
 | `market_quotes` | 관심 종목의 마지막 수집 시세 |
 | `market_indices` | 글로벌 지수 심볼·시장 관측일·수집 시각 |

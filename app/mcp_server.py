@@ -12,9 +12,9 @@ from datetime import timedelta
 from mcp.server import MCPServer
 
 from app import (
-    analysis, correlation, coverage, dashboard, db, explain, history_recovery,
-    market_metrics, normalize, sentiment as sentiment_gauge,
-    spillover as spillover_analysis,
+    analysis, brief as brief_module, correlation, coverage, dashboard, db,
+    explain, history_recovery, market_metrics, normalize,
+    sentiment as sentiment_gauge, spillover as spillover_analysis,
 )
 from app.collectors import indices, indicators
 from app.timeutil import kst_today
@@ -113,6 +113,23 @@ def market_situation() -> dict:
             "보고하세요."
         ),
     }
+
+
+@mcp.tool()
+def market_brief() -> dict:
+    """Report what moved, what disagrees, and what would change the verdict.
+
+    Use this when the question is "what should I be looking at" rather than
+    "what is X". It surfaces contradictions the composite scores average away,
+    the distribution moves of the past week, and — as arithmetic on the votes
+    already cast — which single component would have to change for the regime
+    verdict to change.
+
+    It is not advice. ``flip_conditions`` says what would move the reading,
+    never what to do about it, and ``unresolved`` lists evidence that did not
+    vote so an absence is never read as a neutral opinion.
+    """
+    return brief_module.brief()
 
 
 @mcp.tool()

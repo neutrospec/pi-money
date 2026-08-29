@@ -28,14 +28,15 @@ See [references/tool-guide.md](references/tool-guide.md) for the canonical tool 
    - Use `market_universe` for provider-discovered KRX instruments; this is broader than the quote watchlist.
    - Use `market_datasets` before `market_daily` when the KRX table name is uncertain. `market_daily` needs an explicit dataset because the option table alone holds ~18,000 contracts per session.
 3. For "what is going on right now", call `market_situation` once instead of assembling the same picture from a dozen single-series calls. It returns both regime verdicts (`regime` for the US, `korea_regime` for Korea), core policy/funding/risk levels, derived spreads and liquidity, this week's high-impact releases, and a freshness line — each with its own observation date.
-4. For risk appetite specifically, `market_sentiment` scores it 0-100 from collected inputs and shows each component. Report where components disagree rather than only the composite.
-5. Call the narrowest tool that answers the question. Do not combine every analysis by default.
+4. When the question is "what should I be looking at" rather than "what is X", call `market_brief`. It surfaces the contradictions the composite scores average away, the past week's distribution moves, and `flip_conditions` — which single component would have to change for the regime verdict to change. `flip_conditions` is arithmetic on the votes already cast, not a forecast and never a recommendation; quote it as "what would change the reading", never as "what to do". Report `unresolved` alongside it: evidence that did not vote must not be read as a neutral opinion.
+5. For risk appetite specifically, `market_sentiment` scores it 0-100 from collected inputs and shows each component. Report where components disagree rather than only the composite.
+6. Call the narrowest tool that answers the question. Do not combine every analysis by default.
    - For a broad market assessment, choose representative `core` series from the needed layers: `policy_rates`, `liquidity`, `credit_stress`, `growth_cycle`, `fx_external`, and `market_breadth`.
    - Do not fetch every indicator. Prefer one primary series plus at most one cross-check per layer unless the user asks for a deep dive.
    - Use `market_derived_metrics` for aligned transformations and cross-asset relative strength; do not duplicate its unit conversions ad hoc.
    - Use `market_breadth` for cached KRX advance/decline and concentration data. An unavailable result usually means dataset approval is still pending.
-6. In the answer, state the market observation date, source, and whether the result is cached when those fields are relevant.
-7. If data is missing, stale, partial, or errored, report that limitation. Do not interpolate, invent a current value, or silently replace it with web data.
+7. In the answer, state the market observation date, source, and whether the result is cached when those fields are relevant.
+8. If data is missing, stale, partial, or errored, report that limitation. Do not interpolate, invent a current value, or silently replace it with web data.
    - Say which kind of absence it is: `confirmed` means the provider has it and we failed to collect it; `candidate` means the series' cadence implies it but it may never have been published. That distinction is itself evidence.
 
 ## Distinguish dates

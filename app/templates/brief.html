@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block title %}브리핑 — Money Market Intelligence{% endblock %}
+{% block content %}
+  {% macro word(name) -%}
+    {% if name=='risk_off' %}위험 회피{% elif name=='risk_on' %}위험 선호
+    {% elif name=='neutral' %}중립{% else %}판정 보류{% endif %}
+  {%- endmacro %}
+  <div class="pagehead">
+    <h1>📝 브리핑</h1>
+    <div class="sub">무엇이 움직였고, 무엇이 어긋나며, 무엇이 바뀌면 판정이 달라지는가 · {{ b.as_of }} (KST)</div>
+  </div>
+
+  <div class="card" style="border-left:4px solid #6e7681;">
+    <div style="display:flex;flex-wrap:wrap;gap:20px;align-items:baseline;">
+      <div><span style="color:#8b949e;font-size:12px;">한국 국면</span>
+        <div style="font-size:19px;font-weight:700;">{{ word(b.korea_regime.regime) }}
+          <span style="font-size:12px;color:#8b949e;font-weight:400;">순점수 {{ b.korea_regime.score }} · {{ b.korea_regime.component_count }}/{{ b.korea_regime.component_total }}</span></div></div>
+      <div><span style="color:#8b949e;font-size:12px;">미국 국면</span>
+        <div style="font-size:19px;font-weight:700;">{{ word(b.regime.regime) }}
+          <span style="font-size:12px;color:#8b949e;font-weight:400;">순점수 {{ b.regime.score }}</span></div></div>
+      <div><span style="color:#8b949e;font-size:12px;">시장 심리</span>
+        <div style="font-size:19px;font-weight:700;">{{ b.sentiment.score }}
+          <span style="font-size:12px;color:#8b949e;font-weight:400;">{{ b.sentiment.band_label }} · {{ b.sentiment.component_count }}/{{ b.sentiment.component_total }}</span></div></div>
+    </div>
+    <div style="color:#6e7681;font-size:11px;margin-top:10px;">{{ b.warning }}</div>
+  </div>
+
+  {# Sections appear only when they have something in them. A brief with every
+     heading always filled is a brief nobody reads. #}
+  {% if b.disagreements %}
+  <div class="card">
+    <div class="card-title">어긋나는 것 <span style="color:#8b949e;font-weight:400;">{{ b.disagreements | length }}건</span></div>
+    <div class="card-sub">합성 판정이 평균으로 지우는 정보입니다. 갈리는 지점이 어디인지가 판정 자체보다 많은 것을 말합니다.</div>
+    {% for d in b.disagreements %}
+    <div style="border-left:2px solid #d29922;padding:6px 0 6px 12px;margin-bottom:14px;">
+      <div style="font-size:14px;font-weight:600;">{{ d.title }}</div>
+      <div style="font-size:13px;color:#c9d1d9;margin:4px 0;">{{ d.detail }}</div>
+      <div style="font-size:12px;color:#8b949e;">{{ d.why }}</div>
+      <details class="learn"><summary>?</summary>
+        {% for e in d.evidence %}<p>{{ e }}</p>{% endfor %}
+      </details>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if b.flip_conditions %}
+  <div class="card">
+    <div class="card-title">무엇이 바뀌면 판정이 달라지나</div>
+    <div class="card-sub">
+      같은 규칙에 다른 질문을 한 결과입니다 — 예측이 아니라 산술.
+      구성요소 하나의 표를 바꿔 넣고 판정 규칙을 다시 읽은 것입니다.
+    </div>
+    <div class="scroll"><table>
+      <thead><tr><th>구성요소</th><th>바뀌면</th><th>판정</th><th>필요한 이동</th></tr></thead>
+      <tbody>
+      {% for f in b.flip_conditions %}
+        {% if f.unreachable %}
+        <tr><td colspan="4" style="color:#8b949e;">{{ f.detail }}</td></tr>
+        {% else %}
+        <tr>
+          <td>{{ f.label }}</td>
+          <td class="num">{{ '%+d' | format(f.from_score) }} → {{ '%+d' | format(f.to_score) }}</td>
+          <td>{{ word(f.verdict) }}</td>
+          <td class="num">
+            {% if f.percentile_gap is not none %}백분위 {{ f.percentile | round(0) | int }} → {{ (f.percentile + f.percentile_gap) | round(0) | int }} ({{ '%+.0f' | format(f.percentile_gap) }}p){% else %}이동평균 교차{% endif %}
+          </td>
+        </tr>
+        {% endif %}
+      {% endfor %}
+      </tbody>
+    </table></div>
+  </div>
+  {% endif %}
+
+  {% if b.movers %}
+  <div class="card">
+    <div class="card-title">최근 {{ b.lookback_days }}일 동안 자기 분포에서 이동한 계열</div>
+    <div class="card-sub">
+      수준이 아니라 이동입니다. 1년 내내 상단에 붙어 있는 정책금리는 뉴스가 아니고,
+      중간에서 끝으로 옮겨간 계열이 뉴스입니다.
+    </div>
+    <div class="scroll"><table>
+      <thead><tr><th>계열</th><th>값</th><th>분포 이동</th><th>기간</th><th>함께 볼 것</th></tr></thead>
+      <tbody>
+      {% for m in b.movers %}
+      <tr>
+        <td><a href="/charts?key={{ m.key }}">{{ m.label }}</a></td>
+        <td class="num">{{ m.now }}</td>
+        <td class="num"><span class="{% if m.change > 0 %}pos{% else %}neg{% endif %}">{{ '%+.1f' | format(m.change) }}p</span>
+          <span style="color:#6e7681;">({{ m.then | round(0) | int }}→{{ m.now | round(0) | int }})</span></td>
+        <td style="color:#8b949e;font-size:11px;">{{ m.from_date }} ~ {{ m.as_of }}</td>
+        <td style="font-size:11px;">
+          {% for w in m.watch %}<a href="/charts?key={{ w.key }}">{{ w.label }}</a>{% if not loop.last %} · {% endif %}{% else %}<span style="color:#6e7681;">—</span>{% endfor %}
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+  </div>
+  {% endif %}
+
+  {% if b.unresolved %}
+  <div class="card">
+    <div class="card-title">투표하지 않은 근거</div>
+    <div class="card-sub">이력이 부족한 구성요소는 추정하지 않고 빠집니다. 중립으로 세지 마세요.</div>
+    {% for u in b.unresolved %}
+    <div style="font-size:12px;color:#8b949e;padding:3px 0;">[{{ u.source }}] {{ u.label }} — {{ u.reason }}</div>
+    {% endfor %}
+  </div>
+  {% endif %}
+{% endblock %}

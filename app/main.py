@@ -17,8 +17,9 @@ from fastapi.templating import Jinja2Templates
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 from app import (
-    analysis, correlation, coverage, dashboard, db, explain, history_recovery,
-    market_metrics, normalize, registry, sentiment, spillover,
+    analysis, brief as brief_module, correlation, coverage, dashboard, db,
+    explain, history_recovery, market_metrics, normalize, registry, sentiment,
+    spillover,
 )
 from app.collectors import indices, indicators, krx, watchlist
 from app.collectors.indicators import categories
@@ -97,6 +98,20 @@ def situation_page(request: Request):
             "active": "home",
         },
     )
+
+
+@app.get("/brief", response_class=HTMLResponse)
+def brief_page(request: Request):
+    """What moved, what disagrees, and what would change the verdict."""
+    return templates.TemplateResponse(
+        request, "brief.html",
+        {"b": brief_module.brief(), "active": "brief"},
+    )
+
+
+@app.get("/api/brief")
+def api_brief():
+    return brief_module.brief()
 
 
 @app.get("/learn", response_class=HTMLResponse)

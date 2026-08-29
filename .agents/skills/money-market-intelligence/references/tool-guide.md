@@ -1,12 +1,13 @@
 # Tool guide
 
-MCP and pi expose the same 21 canonical capabilities. MCP reads SQLite
+MCP and pi expose the same 22 canonical capabilities. MCP reads SQLite
 directly; pi calls the matching cache-only REST endpoint. MCP reads SQLite directly; pi calls the matching cache-only REST endpoint.
 
 | Tool | Use it for | Important inputs |
 |------|------------|------------------|
 | `market_health` | Database integrity, last collection, partial/error collectors, overall/core analysis coverage, completeness verdict | none |
 | `market_coverage` | Which observations are missing and whether the collector can still recover them | optional `key`: an indicator key or index symbol |
+| `market_brief` | What moved in the past week, what disagrees, and which single component would have to change for the regime verdict to change. Use it for "what should I be looking at"; `flip_conditions` is arithmetic on votes already cast, never advice | none |
 | `market_situation` | The whole front-page state in one call: regime, core levels, derived risk, this week's high-impact releases, freshness | none |
 | `market_sentiment` | Korean risk-appetite score 0-100 with per-component detail and what could not be measured | none |
 | `market_events` | Upcoming official economic events in KST | `days` 1–365, optional ISO country code in MCP |
