@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block title %}층별 근거 — Money Market Intelligence{% endblock %}
+{% block content %}
+  {% macro word(name) -%}
+    {% if name=='risk_off' %}위험 회피{% elif name=='risk_on' %}위험 선호
+    {% elif name=='neutral' %}중립{% elif name=='abstains' %}판정 안 함{% else %}판정 보류{% endif %}
+  {%- endmacro %}
+  {% macro tone(name) -%}
+    {% if name=='risk_off' %}#f85149{% elif name=='risk_on' %}#3fb950
+    {% elif name=='neutral' %}#d29922{% else %}#6e7681{% endif %}
+  {%- endmacro %}
+  {% macro grade(name) -%}
+    {% if name=='high' %}높음{% elif name=='medium' %}보통{% else %}낮음{% endif %}
+  {%- endmacro %}
+
+  <div class="pagehead">
+    <h1>🧱 층별 근거</h1>
+    <div class="sub">같은 카탈로그를 불일치가 아니라 <b>무엇의 근거인가</b>로 잘랐습니다 · {{ c.as_of }} (KST)</div>
+  </div>
+
+  <div class="card" style="border-left:4px solid #6e7681;">
+    <div style="display:flex;flex-wrap:wrap;gap:24px;align-items:baseline;">
+      <div><span style="color:#8b949e;font-size:12px;">층 합의</span>
+        <div style="font-size:17px;font-weight:700;">{{ c.agreement }}</div></div>
+      <div><span style="color:#8b949e;font-size:12px;">근거 신뢰도</span>
+        <div style="font-size:17px;font-weight:700;">{{ grade(c.confidence.level) }}
+          <span style="font-size:12px;color:#8b949e;font-weight:400;">
+            {{ c.confidence.voted }}/{{ c.confidence.expected }}개 보고{% if c.confidence.stale %} · {{ c.confidence.stale }}개 지연{% endif %}</span></div></div>
+    </div>
+    <div style="color:#6e7681;font-size:11px;margin-top:10px;">{{ c.warning }}</div>
+  </div>
+
+  {% for l in c.layers %}
+  <div class="card" style="border-left:3px solid {{ tone(l.stance) }};">
+    <div class="card-title">
+      {{ l.label }}
+      <span style="color:{{ tone(l.stance) }};font-weight:600;font-size:13px;">{{ word(l.stance) }}</span>
+      {% if l.mode == 'stance' %}<span style="color:#8b949e;font-weight:400;font-size:12px;">순점수 {{ l.score }}</span>{% endif %}
+      {% if l.split %}<span style="color:#d29922;font-weight:400;font-size:12px;">· 내부 갈림</span>{% endif %}
+    </div>
+    <div class="card-sub">{{ l.question }}</div>
+    <div style="font-size:13px;color:#c9d1d9;margin:6px 0 10px;">{{ l.reading }}</div>
+
+    <div style="font-size:11px;color:#8b949e;margin-bottom:6px;">
+      근거 신뢰도 <b style="color:#c9d1d9;">{{ grade(l.confidence.level) }}</b>
+      — {{ l.confidence.expected }}개 중 {{ l.confidence.voted }}개 보고{% if l.confidence.stale %}, {{ l.confidence.stale }}개 지연{% endif %}
+    </div>
+    {% for r in l.confidence.reasons %}
+    <div style="font-size:11px;color:#d29922;margin-bottom:4px;">· {{ r }}</div>
+    {% endfor %}
+
+    {% if l.evidence %}
+    <div class="scroll"><table>
+      <thead><tr><th>계열</th><th>값</th><th>분포 위치</th>
+        {% if l.mode == 'level' %}<th>주간 이동</th>{% else %}<th>표</th>{% endif %}
+        <th>관측일</th></tr></thead>
+      <tbody>
+      {% for e in l.evidence %}
+      <tr>
+        <td><a href="/charts?key={{ e.key }}">{{ e.label }}</a>{% if e.priority == 'core' %} <span style="color:#58a6ff;font-size:10px;">핵심</span>{% endif %}</td>
+        <td>{{ e.value }}{{ e.unit }}</td>
+        <td>{{ '%.1f'|format(e.percentile) }} <span style="color:#6e7681;font-size:11px;">{{ e.window_label }}</span></td>
+        {% if l.mode == 'level' %}
+        <td>{% if e.movement %}{{ '%+.1f'|format(e.movement.change) }}p{% else %}<span style="color:#6e7681;">—</span>{% endif %}</td>
+        {% else %}
+        <td style="color:{% if e.vote > 0 %}#3fb950{% elif e.vote < 0 %}#f85149{% else %}#8b949e{% endif %};">
+          {% if e.vote > 0 %}＋1{% elif e.vote < 0 %}−1{% else %}0{% endif %}</td>
+        {% endif %}
+        <td style="color:{% if e.stale %}#d29922{% else %}#8b949e{% endif %};">{{ e.as_of }}{% if e.stale %} <span style="font-size:10px;">{{ e.days_late }}일 초과</span>{% endif %}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+    {% if l.more %}<div style="font-size:11px;color:#6e7681;margin-top:6px;">표에 실리지 않은 근거 {{ l.more }}개도 판정과 신뢰도에 포함됩니다.</div>{% endif %}
+    {% endif %}
+
+    {% if l.pending %}
+    <details class="learn"><summary>아직 투표하지 못한 근거 {{ l.pending | length }}개</summary>
+      {% for p in l.pending %}<p><b>{{ p.label }}</b> — {{ p.reason }}</p>{% endfor %}
+    </details>
+    {% endif %}
+  </div>
+  {% endfor %}
+
+  <div class="card">
+    <div class="card-title">이 화면을 읽는 법</div>
+    <div style="font-size:13px;color:#c9d1d9;line-height:1.7;">
+      <p>각 계열은 <b>자기 자신의 분포</b>에서 어디 있는지로 표를 던집니다. 임계값이 아니라
+         그 계열이 평소 어떤 값을 갖는지가 기준입니다. 상위 {{ cuts.on|int }}% 이상이면 ＋1,
+         하위 {{ cuts.off|int }}% 이하면 −1, 그 사이는 0입니다.</p>
+      <p><b>정책 층만 판정하지 않습니다.</b> 금리와 물가는 상승의 의미를 선언하지 않은
+         계열이라 표를 던질 수 없습니다. 금리 상승이 긴축인지 경기 회복인지는 백분위가
+         답할 수 없는 질문이고, 억지로 판정하면 그 구분을 지우게 됩니다.</p>
+      <p><b>신뢰도는 판정을 바꾸지 않습니다.</b> 그 판정이 몇 개의 근거 위에 서 있고
+         그중 몇 개가 갱신 주기를 넘겼는지만 말합니다. 도착하지 않은 근거와 늦게 도착한
+         근거는 원인이 달라서 따로 셉니다.</p>
+    </div>
+  </div>
+{% endblock %}

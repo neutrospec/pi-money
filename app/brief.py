@@ -15,7 +15,7 @@ always filled is a brief nobody reads. Adding an item here means removing one.
 """
 from __future__ import annotations
 
-from app import analysis, db, market_metrics, normalize, sentiment
+from app import analysis, db, layers, market_metrics, normalize, sentiment
 from app.collectors import indicators
 from app.timeutil import kst_today
 
@@ -227,6 +227,35 @@ def unresolved(korea: dict, gauge: dict) -> list[dict]:
     return out
 
 
+def confidence(korea: dict, gauge: dict) -> dict:
+    """How thick the evidence under today's verdicts is.
+
+    Kept to a line, and it never changes a verdict. A number that silently
+    moved the classification would be a second classifier hiding inside a
+    caveat; this one only says how much stood behind the first.
+
+    Counted over the regime and sentiment components rather than the whole
+    catalogue, because those are what the headline numbers actually used —
+    the five layers report their own, wider base on ``/layers``.
+    """
+    parts = [
+        {"voted": True, "stale": False, "days_late": None, "label": item.get("label", item["key"])}
+        for item in korea.get("components", [])
+    ] + [
+        {"voted": True, "stale": False, "days_late": None, "label": item.get("label", "")}
+        for item in gauge.get("components", []) if item.get("score") is not None
+    ] + [
+        {"voted": False, "label": item.get("label", item.get("key"))}
+        for item in korea.get("pending", []) + gauge.get("pending", [])
+    ]
+    reading = layers.confidence(parts, len(parts))
+    return {
+        **reading,
+        "scope": "국면·심리 구성요소",
+        "link": "/layers",
+    }
+
+
 def brief() -> dict:
     korea, us, gauge = _korea_regime(), _us_regime(), sentiment.gauge()
     return {
@@ -234,6 +263,7 @@ def brief() -> dict:
         "korea_regime": korea,
         "regime": us,
         "sentiment": gauge,
+        "confidence": confidence(korea, gauge),
         "disagreements": disagreements(korea, us, gauge),
         "flip_conditions": _flip_conditions(korea),
         "movers": movers(),

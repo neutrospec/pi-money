@@ -21,7 +21,16 @@
       <div><span style="color:#8b949e;font-size:12px;">시장 심리</span>
         <div style="font-size:19px;font-weight:700;">{{ b.sentiment.score }}
           <span style="font-size:12px;color:#8b949e;font-weight:400;">{{ b.sentiment.band_label }} · {{ b.sentiment.component_count }}/{{ b.sentiment.component_total }}</span></div></div>
+      <div><span style="color:#8b949e;font-size:12px;">근거 신뢰도</span>
+        <div style="font-size:19px;font-weight:700;">
+          {% if b.confidence.level=='high' %}높음{% elif b.confidence.level=='medium' %}보통{% else %}낮음{% endif %}
+          <span style="font-size:12px;color:#8b949e;font-weight:400;">
+            {{ b.confidence.voted }}/{{ b.confidence.expected }} 보고{% if b.confidence.stale %} · {{ b.confidence.stale }} 지연{% endif %}
+            · <a href="{{ b.confidence.link }}">층별 근거</a></span></div></div>
     </div>
+    {% for r in b.confidence.reasons %}
+    <div style="color:#d29922;font-size:11px;margin-top:6px;">· {{ r }}</div>
+    {% endfor %}
     <div style="color:#6e7681;font-size:11px;margin-top:10px;">{{ b.warning }}</div>
   </div>
 

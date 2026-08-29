@@ -18,7 +18,8 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 from app import (
     analysis, brief as brief_module, correlation, coverage, dashboard, db,
-    explain, history_recovery, market_metrics, normalize, registry, sentiment,
+    explain, history_recovery, layers as layers_module, market_metrics,
+    normalize, registry, sentiment,
     spillover,
 )
 from app.collectors import indices, indicators, krx, watchlist
@@ -112,6 +113,24 @@ def brief_page(request: Request):
 @app.get("/api/brief")
 def api_brief():
     return brief_module.brief()
+
+
+@app.get("/layers", response_class=HTMLResponse)
+def layers_page(request: Request):
+    return templates.TemplateResponse(
+        request, "layers.html",
+        {
+            "c": layers_module.cards(),
+            "cuts": {"on": analysis.KR_RISK_ON_PERCENTILE,
+                     "off": analysis.KR_RISK_OFF_PERCENTILE},
+            "active": "layers",
+        },
+    )
+
+
+@app.get("/api/layers")
+def api_layers():
+    return layers_module.cards()
 
 
 @app.get("/learn", response_class=HTMLResponse)

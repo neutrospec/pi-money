@@ -18,7 +18,8 @@ from app import db
 
 
 PAGES = (
-    "/", "/brief", "/rates", "/charts", "/stocks", "/indices", "/markets",
+    "/", "/brief", "/layers", "/rates", "/charts", "/stocks", "/indices",
+    "/markets",
     "/analysis", "/correlation", "/spillover", "/data", "/manage", "/calendar",
     "/learn",
 )
@@ -30,6 +31,8 @@ UI_EXEMPT = {
     "/api/situation": "the front page renders this payload server-side",
     "/api/brief": "the brief page renders this payload server-side; the "
                   "endpoint exists because agents consume the briefing too",
+    "/api/layers": "the /layers page renders this payload server-side; the "
+                   "endpoint exists because agents read the layer cards too",
     "/api/analysis/regime": "included in the server-rendered situation payload",
     "/api/analysis/sentiment": "included in the server-rendered situation payload",
     "/api/events": "the calendar page renders events server-side",
