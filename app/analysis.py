@@ -504,9 +504,17 @@ def _percentile_component(
     invert: bool,
     unit: str,
     note: str,
-    window: int = KR_PERCENTILE_WINDOW,
+    window: int | None = KR_PERCENTILE_WINDOW,
 ) -> dict:
-    """Score one series against its own trailing distribution."""
+    """Score one series against its own distribution.
+
+    ``window`` of None means the full history. Which is right depends on the
+    series: a spread's normal level drifts with the rate cycle, so a trailing
+    year is the honest baseline. Implied volatility does not drift — it mean
+    reverts — so a trailing year that happens to contain a crash lets the
+    crash define what normal means and scores itself as unremarkable. That is
+    the same trap the drawdown component avoids, for the same reason.
+    """
     minimum = KR_MIN_HISTORY[key]
     if not series or len(series) < minimum:
         return {
@@ -521,9 +529,9 @@ def _percentile_component(
             "reason": f"{note} 최신 관측이 {KR_MAX_AGE_DAYS}일보다 오래돼 제외했습니다",
         }
     values = [item["value"] for item in series]
-    percentile = _risk_on_percentile(
-        point["value"], values[-window:], invert=invert
-    )
+    scope = values if window is None else values[-window:]
+    percentile = _risk_on_percentile(point["value"], scope, invert=invert)
+    span = "전체" if window is None else "최근"
     return {
         "key": key,
         "label": label,
@@ -531,7 +539,7 @@ def _percentile_component(
         "percentile": percentile,
         "value": point["value"],
         "as_of": point["date"],
-        "detail": f"{note} {point['value']}{unit}, 최근 {min(window, len(values))}"
+        "detail": f"{note} {point['value']}{unit}, {span} {len(scope)}"
                   f"거래일 분포에서 위험선호 방향 {percentile:.0f}점",
     }
 
@@ -629,7 +637,7 @@ def korea_regime(
     components = [
         _percentile_component(
             "volatility", "변동성", vkospi, invert=True, unit="",
-            note="VKOSPI",
+            note="VKOSPI", window=None,
         ),
         _percentile_component(
             "credit", "회사채 신용", credit_spread, invert=True, unit="%p",
@@ -676,8 +684,10 @@ def korea_regime(
             f"각 입력을 자체 분포에서 위험선호 방향 백분위로 환산해 "
             f"{KR_RISK_ON_PERCENTILE:.0f}점 이상 +1, "
             f"{KR_RISK_OFF_PERCENTILE:.0f}점 이하 −1로 채점합니다. "
-            f"스프레드는 최근 {KR_PERCENTILE_WINDOW}거래일, 낙폭은 전체 이력을 "
-            f"분포로 씁니다. 이력이 부족한 구성요소는 추정하지 않고 pending에 "
+            f"스프레드는 최근 {KR_PERCENTILE_WINDOW}거래일, 변동성과 낙폭은 "
+            f"전체 이력을 분포로 씁니다. 스프레드의 정상 수준은 금리 사이클과 "
+            f"함께 이동하지만 변동성과 낙폭은 평균회귀하므로, 1년 창을 쓰면 "
+            f"지금의 위기가 스스로의 기준선이 됩니다. 이력이 부족한 구성요소는 추정하지 않고 pending에 "
             f"사유를 남기며, 활성 구성요소가 "
             f"{KR_MIN_ACTIVE_COMPONENTS}개 미만이면 판정하지 않습니다."
         ),

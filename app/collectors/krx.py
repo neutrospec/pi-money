@@ -56,10 +56,13 @@ DATASETS = [
     # VKOSPI arrives as one row among 320 derivative indices. Promoting it to
     # an indicator series is what makes it addressable by name instead of
     # requiring every consumer to know the row it hides in.
-    # A year of this table is ~80,000 rows and it carries VKOSPI, which two
-    # gauges need a distribution for. The option table stays shallow.
+    # Three years of this table is ~240,000 rows and it carries VKOSPI, whose
+    # score is taken against its whole record: implied volatility mean
+    # reverts, so a baseline that only spans the current crisis would call the
+    # crisis normal. Verified served back to 2022. The option table is ~9,000
+    # rows a session and stays shallow.
     _spec("drvprod_dd_trd", "idx/drvprod_dd_trd", "파생상품지수", "derivative_index",
-          "balanced", aggregate="named_index", history_days=250),
+          "balanced", aggregate="named_index", history_days=750),
     _spec("stk_bydd_trd", "sto/stk_bydd_trd", "유가증권", "stock", "balanced"),
     _spec("ksq_bydd_trd", "sto/ksq_bydd_trd", "코스닥", "stock", "balanced"),
     _spec("knx_bydd_trd", "sto/knx_bydd_trd", "코넥스", "stock", "balanced"),

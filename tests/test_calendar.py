@@ -460,6 +460,35 @@ class KoreaRegimeTests(TemporaryDatabaseTest):
         self.assertEqual(-1, credit_of(wide)["score"])
         self.assertEqual(1, credit_of(narrow)["score"])
 
+    def test_volatility_is_scored_against_its_whole_history_not_a_trailing_year(self):
+        """A crisis inside the window must not become the window's baseline.
+
+        Two calm years then a crisis: against the last 250 sessions — most of
+        them already in the crisis — today's elevated reading looks ordinary.
+        Against the whole record it is what it is. Spreads keep the trailing
+        window because their normal level drifts with the rate cycle; implied
+        volatility mean reverts, so it belongs with the drawdown component.
+        """
+        # Calm years dominate the record, but the crisis fills the last year.
+        calm = [20.0] * 1500
+        crisis = [80.0] * 260 + [56.0]
+        vkospi = self._series(calm + crisis)
+        spread = self._series([0.5] * 250 + [0.5])
+        result = analysis.korea_regime(vkospi, spread, spread, None)
+        volatility = next(
+            c for c in result["components"] if c["key"] == "volatility"
+        )
+
+        # Trailing 250 would put 56 near the calm end of a crisis-only window
+        # and score it risk-on; the full record ranks it above two calm years.
+        trailing = analysis._risk_on_percentile(
+            56.0, (calm + crisis)[-250:], invert=True
+        )
+        self.assertGreaterEqual(trailing, analysis.KR_RISK_ON_PERCENTILE)
+        self.assertLessEqual(volatility["percentile"], analysis.KR_RISK_OFF_PERCENTILE)
+        self.assertEqual(-1, volatility["score"])
+        self.assertIn("전체", volatility["detail"])
+
     def test_trend_and_drawdown_disagree_on_a_bounce_inside_a_crash(self):
         """Above the 200-day average and deep below the 52-week high at once.
 
