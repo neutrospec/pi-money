@@ -405,7 +405,11 @@ def out_of_window(symbol: str = "^KS11", horizon: int = HORIZON_DAYS,
 
 
 def structure(verdicts: list[dict]) -> dict:
-    """What the classifier turned out to be, as opposed to what it declares.
+    """What the Korean classifier turned out to be, as opposed to what it declares.
+
+    Korean only, because ``backtest_verdicts`` stores per-component votes for
+    that classifier alone. The US verdict is cached as a regime and a score,
+    so there is nothing here to decompose and this must not be called for it.
 
     A composite of five votes can collapse into one, and nothing in an accuracy
     number shows it. Two things this measures, both of which changed how the
@@ -500,7 +504,11 @@ def report(field: str = "korea_regime") -> dict:
         "grid": grid(verdicts, symbol, field=field),
         "conditional": conditional(verdicts, outcomes, field=field),
         "churn": churn(verdicts, field=field),
-        "structure": structure(verdicts),
+        # Korea only. ``structure`` reads korea_components, and the US
+        # classifier's inputs (VIX, IG spread, S&P trend) are not stored at
+        # all — rendering them under a US heading would be Korean internals
+        # wearing the wrong label.
+        "structure": structure(verdicts) if market == "korea" else None,
         # The one test available today that separates a regularity from a
         # property of this particular window. Korea only: the rule is built
         # from ^KS11 and there is no equivalent for the US classifier.

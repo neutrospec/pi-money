@@ -118,6 +118,7 @@
     </div>
   </div>
 
+  {% if r.structure %}
   <div class="card">
     <div class="card-title">이 분류기가 실제로 무엇인가
       <span style="color:#8b949e;font-weight:400;font-size:12px;">고치지 않고 잰 것입니다</span></div>
@@ -160,6 +161,7 @@
       </tbody>
     </table></div>
   </div>
+  {% endif %}
 
   {% if r.out_of_window %}
   <div class="card" style="border-left:3px solid #58a6ff;">
