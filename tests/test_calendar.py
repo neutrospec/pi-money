@@ -672,10 +672,32 @@ class SchedulerTests(TemporaryDatabaseTest):
 
         self.assertEqual([], calls)
         self.assertEqual("backoff", report[0]["action"])
+        self.assertEqual("provider_error", report[0]["reason"])
         self.assertGreater(report[0]["retry_in_seconds"], 0)
         self.assertEqual("pending", db.get_reconciliation_state()["status"])
 
-    def test_bounded_backlog_is_partial_without_being_counted_as_failure(self):
+    def test_cadence_backoff_is_not_an_unresolved_reconciliation_action(self):
+        db.init_db()
+        db.set_collector_state(
+            "cadence-demo", status="success", ok=1, total=1, success=True
+        )
+        scheduler = Scheduler(repair_backoff=3600, error_backoff=3600)
+        scheduler.register(Collector(
+            "cadence-demo", 86_400, lambda: {"ok": 1, "total": 1},
+            is_fresh=lambda: False,
+            repair=lambda: {"ok": 1, "total": 1},
+        ))
+
+        report = scheduler.reconcile()
+
+        self.assertEqual("backoff", report[0]["action"])
+        self.assertEqual("cadence", report[0]["reason"])
+        # Data younger than one collection interval is not a fault. Counting
+        # it as unresolved left the whole system reading as degraded in the
+        # gaps between a five-minute collector's own runs.
+        self.assertEqual("ok", db.get_reconciliation_state()["status"])
+
+    def test_bounded_backlog_is_a_healthy_run_not_a_failure(self):
         db.init_db()
         collector = Collector(
             "bounded-demo", 0,
@@ -685,10 +707,35 @@ class SchedulerTests(TemporaryDatabaseTest):
         outcome = collector.execute(trigger="reconcile")
         state = db.get_collector_state("bounded-demo")
 
-        self.assertEqual("partial", outcome["status"])
+        self.assertEqual("backlog", outcome["status"])
         self.assertEqual(7, outcome["pending"])
-        self.assertEqual("7 item(s) pending", state["error"])
+        self.assertIsNone(state["error"])
         self.assertIn('"pending": 7', state["details"])
+        # The remaining queue is disclosed, but the run counts as a success:
+        # otherwise the recovery delay applies the provider-error backoff and
+        # a queue drains slower for no reason other than being non-empty.
+        self.assertIsNotNone(state["last_success_at"])
+        self.assertIn("backlog", db.HEALTHY_RUN_STATUSES)
+
+    def test_backlog_does_not_take_the_provider_error_backoff(self):
+        db.init_db()
+        scheduler = Scheduler(repair_backoff=0, error_backoff=3600)
+        collector = Collector(
+            "backlog-demo", 86_400,
+            lambda: {"ok": 1, "total": 1, "pending": 5, "errors": {}},
+            is_fresh=lambda: False,
+        )
+        scheduler.register(collector)
+
+        first = scheduler.reconcile()
+        self.assertEqual("repaired", first[0]["action"])
+        self.assertEqual("backlog", first[0]["status"])
+
+        # A second sweep still finds work; with no error recorded it must be
+        # allowed to run again rather than wait out the error backoff.
+        second = scheduler.reconcile()
+        self.assertEqual("repaired", second[0]["action"])
+        self.assertEqual("ok", db.get_reconciliation_state()["status"])
 
     def test_quote_repair_fetches_only_missing_symbols(self):
         db.init_db()
@@ -904,6 +951,144 @@ class HistoricalRecoveryTests(TemporaryDatabaseTest):
                 "historical", "krx_access", "stk_bydd_trd", "authorization"
             )["status"],
         )
+
+
+    def test_collector_fed_series_are_never_enrolled_for_provider_recovery(self):
+        db.init_db()
+        catalog = {
+            "x": {
+                "label": "테스트", "unit": "idx", "category": "물가",
+                "source": "fred", "series": "TEST", "future": [],
+            },
+            "kr_vkospi": {
+                "label": "VKOSPI", "unit": "idx", "category": "심리",
+                "source": "krx", "series": "drvprod_dd_trd/변동성지수",
+                "future": [],
+            },
+        }
+        with patch("app.history_recovery.indicators.catalog", return_value=catalog), \
+             patch("app.history_recovery.indicators.cycle_of", return_value="D"), \
+             patch("app.history_recovery.indices.index_list", return_value=[]), \
+             patch("app.history_recovery.krx.enabled", return_value=False):
+            # A row enrolled before the exclusion existed has no provider call
+            # behind it, so it must be dropped rather than re-armed.
+            db.ensure_recovery_target(
+                layer="historical", kind="indicator_history",
+                target="kr_vkospi", scope="provider_snapshot",
+                fingerprint="enrolled-by-mistake",
+            )
+            history_recovery.ensure_targets()
+            settled = history_recovery.is_settled()
+
+        targets = {
+            row["target"] for row in db.list_recovery_targets(
+                layer="historical", kind="indicator_history", manifest=False
+            )
+        }
+        self.assertEqual({"x"}, targets)
+        self.assertFalse(settled)  # "x" is still pending; kr_vkospi is simply gone
+
+    def test_first_line_market_run_settles_the_krx_authorization_gate(self):
+        db.init_db()
+        spec = next(item for item in krx.DATASETS if item["dataset"] == "stk_bydd_trd")
+        day = "2026-08-17"
+        # The first-line collector already reached this dataset, which is what
+        # authorization means. Nothing else ever completes the access row, so
+        # without adopting that proof the layer can never report settled.
+        db.save_market_batch("krx", "stk_bydd_trd", day, [])
+        with patch("app.history_recovery.indicators.catalog", return_value={}), \
+             patch("app.history_recovery.indices.index_list", return_value=[]), \
+             patch("app.history_recovery.krx.enabled", return_value=True), \
+             patch("app.history_recovery.krx.dataset_specs", return_value=[spec]), \
+             patch("app.history_recovery.krx.catchup_dates", return_value=[day]), \
+             patch("app.history_recovery.krx.fetch_dataset") as fetch:
+            settled = history_recovery.is_settled()
+
+        fetch.assert_not_called()
+        gate = db.get_recovery_target(
+            "historical", "krx_access", "stk_bydd_trd", "authorization"
+        )
+        self.assertEqual("complete", gate["status"])
+        self.assertTrue(settled)
+
+    def test_run_row_budget_defers_without_spending_a_finite_attempt(self):
+        db.init_db()
+        spec = next(item for item in krx.DATASETS if item["dataset"] == "stk_bydd_trd")
+        day = "2026-08-17"
+        with patch("app.history_recovery.indicators.catalog", return_value={}), \
+             patch("app.history_recovery.indices.index_list", return_value=[]), \
+             patch("app.history_recovery.krx.enabled", return_value=True), \
+             patch("app.history_recovery.krx.dataset_specs", return_value=[spec]), \
+             patch("app.history_recovery.krx.catchup_dates", return_value=[day]), \
+             patch("app.history_recovery.krx.fetch_dataset", return_value=[{}, {}]), \
+             patch.object(history_recovery, "INDICATOR_CALL_BUDGET", 0), \
+             patch.object(history_recovery, "INDEX_CALL_BUDGET", 0), \
+             patch.object(history_recovery, "KRX_CALL_BUDGET", 1), \
+             patch.object(history_recovery, "KRX_ROW_BUDGET", 1), \
+             patch.object(history_recovery, "MAX_ATTEMPTS", 1):
+            first = history_recovery.run()
+            history_recovery.run()
+
+        row = db.get_recovery_target(
+            "historical", "krx_history", "stk_bydd_trd", day
+        )
+        # MAX_ATTEMPTS is 1 here: had the guard charged an attempt, the first
+        # sweep alone would have retired a day the provider never refused.
+        self.assertEqual("pending", row["status"])
+        self.assertEqual(0, row["attempts"])
+        # The deferral is backlog, not failure, so the run stays healthy.
+        self.assertEqual({}, first["errors"])
+        self.assertEqual((0, 0), (first["ok"], first["total"]))
+        self.assertGreater(first["pending"], 0)
+
+    def test_blocked_authorization_is_not_overwritten_by_an_older_run(self):
+        db.init_db()
+        spec = next(item for item in krx.DATASETS if item["dataset"] == "stk_bydd_trd")
+        day = "2026-08-17"
+        db.save_market_batch("krx", "stk_bydd_trd", day, [])
+        with patch("app.history_recovery.indicators.catalog", return_value={}), \
+             patch("app.history_recovery.indices.index_list", return_value=[]), \
+             patch("app.history_recovery.krx.enabled", return_value=True), \
+             patch("app.history_recovery.krx.dataset_specs", return_value=[spec]), \
+             patch("app.history_recovery.krx.catchup_dates", return_value=[day]):
+            history_recovery.ensure_targets()
+            db.update_recovery_target(
+                "historical", "krx_access", "stk_bydd_trd", "authorization",
+                status="blocked", reason="provider_access_blocked",
+            )
+            history_recovery.ensure_targets()
+
+        gate = db.get_recovery_target(
+            "historical", "krx_access", "stk_bydd_trd", "authorization"
+        )
+        self.assertEqual("blocked", gate["status"])
+
+
+class PublicationLagTests(TemporaryDatabaseTest):
+    def test_weekly_published_fx_is_not_a_daily_deficit(self):
+        """FRED H.10 publishes daily FX once a week, on Monday, through the
+        prior Friday. A healthy series is therefore routinely 8-10 days old,
+        and the 5-day daily allowance made every FX series a standing deficit
+        from midweek until the next release — a repair loop refetching the
+        same values every six hours and never clearing."""
+        db.init_db()
+        for key in ("eur_usd", "us_krw", "usd_jpy", "us_dollar_index"):
+            self.assertEqual(14, indicators.freshness_days(key))
+        db.save_indicator_points(
+            "us_krw", [{"date": "2026-08-21", "value": 1300.0}], "fred"
+        )
+        with patch("app.registry.kst_today", return_value=date(2026, 8, 29)):
+            deficits = registry._indicator_deficits({"D", "W"})
+        self.assertNotIn("us_krw", deficits)
+
+    def test_allowance_still_discloses_a_genuinely_stalled_provider(self):
+        db.init_db()
+        db.save_indicator_points(
+            "us_krw", [{"date": "2026-07-01", "value": 1300.0}], "fred"
+        )
+        with patch("app.registry.kst_today", return_value=date(2026, 8, 29)):
+            deficits = registry._indicator_deficits({"D", "W"})
+        self.assertIn("us_krw", deficits)
 
 
 class ApiTests(TemporaryDatabaseTest):

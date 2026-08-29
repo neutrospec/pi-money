@@ -422,6 +422,13 @@ def get_meta(key: str) -> str | None:
     return row["value"] if row else None
 
 
+# A collector run that finished its slice without failing is healthy even
+# when the queue it drains still holds work. Separating "backlog" from
+# "partial" keeps a bounded batch from being read as a provider failure by
+# the recovery backoff, the health endpoint, and the reconciliation audit.
+HEALTHY_RUN_STATUSES = {"success", "backlog"}
+
+
 def get_reconciliation_state() -> dict:
     """Return the last persisted coverage audit and unresolved actions."""
     last_run = get_meta("last_reconcile")
@@ -436,9 +443,14 @@ def get_reconciliation_state() -> dict:
         if not isinstance(item, dict):
             continue
         action = item.get("action")
-        if action in {"backoff", "audit_error", "busy", "no_audit"}:
+        if action == "backoff":
+            # A collector waiting out its own cadence has nothing unresolved
+            # about it; only one held back after a failure does.
+            if item.get("reason") != "cadence":
+                pending.append(item)
+        elif action in {"audit_error", "busy", "no_audit"}:
             pending.append(item)
-        elif action == "repaired" and item.get("status") != "success":
+        elif action == "repaired" and item.get("status") not in HEALTHY_RUN_STATUSES:
             pending.append(item)
     return {
         "status": "never" if not last_run else ("pending" if pending else "ok"),
@@ -606,6 +618,26 @@ def update_recovery_target(
             (layer, kind, target, scope),
         ).fetchone()
     return _decode_recovery_row(row)
+
+
+def delete_recovery_targets(*, layer: str, kind: str, targets: set[str]) -> int:
+    """Drop ledger rows for targets this layer can no longer act on.
+
+    Resetting is wrong here: a target that has no provider call behind it
+    would just be re-armed and re-exhausted on the next sweep. Removing the
+    row is the only state that stops describing work nobody can do.
+    """
+    if not targets:
+        return 0
+    ordered = sorted(targets)
+    placeholders = ",".join("?" for _ in ordered)
+    with get_conn() as conn:
+        cursor = conn.execute(
+            "DELETE FROM recovery_ledger WHERE layer=? AND kind=? "
+            f"AND target IN ({placeholders})",
+            [layer, kind, *ordered],
+        )
+    return int(cursor.rowcount)
 
 
 def reset_recovery_targets(

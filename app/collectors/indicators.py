@@ -82,6 +82,17 @@ SOURCE_FRESHNESS_OVERRIDES = {
     ("fred", "GBRCPIALLMINMEI"): 600,
     ("fred", "CHNCPIALLMINMEI"): 600,
     ("fred", "IRSTCI01JPM156N"): 130,
+    # H.10 환율은 일별 관측이지만 공표는 주 1회(월요일, 직전 금요일까지)입니다.
+    # 따라서 정상 상태에서도 관측일 기준 9~10일까지 벌어지며, 휴일이 끼면 더
+    # 늘어납니다. 5일 허용치는 매주 수요일부터 월요일까지 이 계열들을 결측으로
+    # 오판해 복구 루프가 같은 값을 6시간마다 다시 받아오게 만들었습니다.
+    ("fred", "DEXUSEU"): 14,
+    ("fred", "DTWEXBGS"): 14,
+    ("fred", "DEXKOUS"): 14,
+    ("fred", "DEXBZUS"): 14,
+    ("fred", "DEXCHUS"): 14,
+    ("fred", "DEXUSUK"): 14,
+    ("fred", "DEXJPUS"): 14,
 }
 
 # Some curated ECOS paths identify a table subtotal but leave a provider
