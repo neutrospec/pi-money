@@ -1028,6 +1028,49 @@ def get_index_points(
     return [dict(r) for r in rows]
 
 
+def market_dataset_days(source: str, dataset: str) -> list[str]:
+    """Dates this dataset holds stored rows for, oldest first."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT date FROM market_daily WHERE source=? AND dataset=? "
+            "ORDER BY date",
+            (source, dataset),
+        ).fetchall()
+    return [row["date"] for row in rows]
+
+
+def market_dataset_raw_rows(source: str, dataset: str, day: str) -> list[dict]:
+    """The provider's own payload for one stored day.
+
+    ``market_daily`` keeps each row's original JSON, so a series derived from
+    a bulk table can be rebuilt from what we already hold instead of asking
+    the provider for a table we stored weeks ago.
+    """
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT raw_json FROM market_daily "
+            "WHERE source=? AND dataset=? AND date=?",
+            (source, dataset, day),
+        ).fetchall()
+    out = []
+    for row in rows:
+        try:
+            payload = json.loads(row["raw_json"] or "{}")
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if isinstance(payload, dict):
+            out.append(payload)
+    return out
+
+
+def indicator_dates(key: str) -> set[str]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT date FROM indicator_points WHERE indicator=?", (key,)
+        ).fetchall()
+    return {row["date"] for row in rows}
+
+
 def market_run_status(source: str, dataset: str, day: str) -> str | None:
     with get_conn() as conn:
         row = conn.execute(

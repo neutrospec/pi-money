@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 from datetime import datetime, timedelta
 
@@ -18,6 +19,8 @@ from app import db
 from app.collectors import indicators, indices, krx
 from app.timeutil import kst_today, parse_instant, utc_now
 
+
+log = logging.getLogger("money")
 
 LAYER = "historical"
 # Bumped when the meaning of a stored observation date changes.  A manifest
@@ -157,7 +160,7 @@ def _ensure_index_targets() -> None:
 def _ensure_krx_targets() -> None:
     if not krx.enabled():
         return
-    initial_days = krx.catchup_dates(KRX_BUSINESS_DAYS)
+    initial_days = krx.catchup_dates(min(20, KRX_BUSINESS_DAYS))
     for spec in krx.dataset_specs():
         source_spec = {
             "source": "krx",
@@ -180,9 +183,13 @@ def _ensure_krx_targets() -> None:
             )
             if item["target"] == spec["dataset"]
         ]
-        # Freeze the historical generation. New sessions are handled by the
-        # first-line collector instead of growing this queue forever.
-        days = existing_days or initial_days
+        # The generation is anchored at its own newest day, never at today.
+        # New sessions stay the first-line collector's job, so this queue
+        # cannot grow forward; raising a dataset's configured depth extends
+        # it backwards only, which is the one direction a backfill means.
+        depth = int(spec.get("history_days") or len(initial_days))
+        anchor = max(existing_days) if existing_days else initial_days[-1]
+        days = sorted(set(existing_days) | set(krx.history_dates(depth, anchor)))
         authorized = False
         for day in days:
             row = db.ensure_recovery_target(
@@ -228,6 +235,87 @@ def _ensure_krx_targets() -> None:
                 reason="market_run_authorization_verified",
                 details={"verified_from": "first_line_market_run"},
             )
+
+
+def store_krx_aggregates(
+    spec: dict,
+    raw_rows: list[dict],
+    day: str,
+    errors: dict[str, str] | None = None,
+    key: str | None = None,
+) -> int:
+    """Persist the market-wide series a bulk KRX table implies.
+
+    Both collection layers call this. A failure here is reported without
+    disowning the rows it was derived from: the caller has already stored a
+    complete table, and re-fetching it because a summariser broke would make
+    the recovery ledger call a stored day a gap.
+    """
+    try:
+        points = krx.derive_aggregate_points(spec, raw_rows, day)
+        for point in points:
+            db.save_indicator_points(
+                point["indicator"],
+                [{"date": point["date"], "value": point["value"]}],
+                source="krx",
+            )
+        return len(points)
+    except Exception as exc:  # the rows this was derived from remain valid
+        if errors is not None and key:
+            errors[f"{key}#aggregate"] = f"{type(exc).__name__}: {exc}"
+        log.warning("KRX aggregate failed for %s %s: %s", spec["dataset"], day, exc)
+        return 0
+
+
+def _barren_days() -> dict:
+    """Stored days that yielded no aggregate, so they are attempted once."""
+    try:
+        value = json.loads(db.get_meta("krx_aggregate_barren_days") or "{}")
+    except (json.JSONDecodeError, TypeError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def rebuild_krx_aggregates(limit_per_dataset: int = 40) -> dict:
+    """Derive missing market-wide series from rows we already hold.
+
+    Cache-only, so it belongs in the audit: ``market_daily`` keeps each row's
+    original payload, and a day whose table is stored but whose derived series
+    is missing needs no provider at all. Only the first-line collector used to
+    derive these, so every day the second-line layer recovered stored a
+    complete table and silently no series — VKOSPI had five observations
+    standing behind twenty days of rows.
+    """
+    barren = _barren_days()
+    repaired: dict[str, int] = {}
+    for spec in krx.dataset_specs():
+        keys = krx.aggregate_indicator_keys(spec)
+        if not keys:
+            continue
+        dataset = spec["dataset"]
+        held = set().union(*(db.indicator_dates(key) for key in keys))
+        skip = set(barren.get(dataset) or [])
+        gaps = [
+            day for day in db.market_dataset_days("krx", dataset)
+            if day not in held and day not in skip
+        ]
+        for day in gaps[:max(1, limit_per_dataset)]:
+            rows = db.market_dataset_raw_rows("krx", dataset, day)
+            stored = store_krx_aggregates(spec, rows, day)
+            if stored:
+                repaired[dataset] = repaired.get(dataset, 0) + stored
+            else:
+                # The table is stored and implies nothing. Recording it stops
+                # the audit from re-parsing the same rows every five minutes.
+                barren.setdefault(dataset, [])
+                if day not in barren[dataset]:
+                    barren[dataset].append(day)
+    if barren:
+        db.set_meta(
+            "krx_aggregate_barren_days",
+            json.dumps(barren, ensure_ascii=False, sort_keys=True)[:16000],
+        )
+    return repaired
 
 
 def ensure_targets() -> None:
@@ -285,6 +373,9 @@ def audit_targets() -> dict:
         current = {point["date"] for point in db.get_index_points(row["target"])}
         _audit_manifest_row(row, current)
     _ensure_krx_targets()
+    rebuilt = rebuild_krx_aggregates()
+    if rebuilt:
+        log.info("rebuilt KRX aggregates from stored rows: %s", rebuilt)
     return db.recovery_summary(LAYER)
 
 
@@ -466,6 +557,10 @@ def _recover_krx(row: dict, remaining_rows: int) -> tuple[dict, int]:
         )
     normalized = krx.normalize_rows(spec, raw_rows, row["scope"])
     db.save_market_batch("krx", spec["dataset"], row["scope"], normalized)
+    # Store the series the table implies, exactly as first-line collection
+    # does. Without this the ledger calls the day complete while the gauge
+    # that needs it stays empty.
+    store_krx_aggregates(spec, raw_rows, row["scope"])
     access = db.get_recovery_target(
         LAYER, "krx_access", row["target"], "authorization"
     )
