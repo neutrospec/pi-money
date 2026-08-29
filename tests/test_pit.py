@@ -137,10 +137,12 @@ class BackfillTests(TemporaryDatabaseTest):
         with db.get_conn() as conn:
             conn.execute("DELETE FROM indicator_vintages")
         self.assertEqual(10, db.backfill_indicator_vintages("us_vix"))
+        # As of today, not a fixed date: the rows are stamped now, so a
+        # hardcoded as-of falls behind the cut the moment the clock advances.
         self.assertEqual(
             [float(day) for day in range(1, 11)],
             [item["value"] for item in pit.Ledger(
-                "2026-08-29", pit.VINTAGE).indicator("us_vix")],
+                kst_today().isoformat(), pit.VINTAGE).indicator("us_vix")],
         )
 
     def test_it_is_stamped_now_so_no_earlier_date_becomes_replayable(self):

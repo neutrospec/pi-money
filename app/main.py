@@ -17,7 +17,8 @@ from fastapi.templating import Jinja2Templates
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 from app import (
-    analysis, brief as brief_module, correlation, coverage, dashboard, db,
+    analysis, backtest, brief as brief_module, correlation, coverage,
+    dashboard, db,
     explain, history_recovery, layers as layers_module, market_metrics, pit,
     normalize, registry, sentiment,
     spillover,
@@ -131,6 +132,20 @@ def layers_page(request: Request):
 @app.get("/api/layers")
 def api_layers():
     return layers_module.cards()
+
+
+@app.get("/backtest", response_class=HTMLResponse)
+def backtest_page(request: Request, market: str = "korea"):
+    field = "us_regime" if market == "us" else "korea_regime"
+    return templates.TemplateResponse(
+        request, "backtest.html",
+        {"r": backtest.report(field), "active": "backtest"},
+    )
+
+
+@app.get("/api/backtest")
+def api_backtest(market: str = "korea"):
+    return backtest.report("us_regime" if market == "us" else "korea_regime")
 
 
 @app.get("/api/replay/readiness")

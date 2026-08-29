@@ -18,10 +18,9 @@ from app import db
 
 
 PAGES = (
-    "/", "/brief", "/layers", "/rates", "/charts", "/stocks", "/indices",
-    "/markets",
-    "/analysis", "/correlation", "/spillover", "/data", "/manage", "/calendar",
-    "/learn",
+    "/", "/brief", "/layers", "/backtest", "/rates", "/charts", "/stocks",
+    "/indices", "/markets", "/analysis", "/correlation", "/spillover", "/data",
+    "/manage", "/calendar", "/learn",
 )
 
 # Endpoints no page fetches, each for a stated reason. Keeping the reason in
@@ -33,6 +32,8 @@ UI_EXEMPT = {
                   "endpoint exists because agents consume the briefing too",
     "/api/layers": "the /layers page renders this payload server-side; the "
                    "endpoint exists because agents read the layer cards too",
+    "/api/backtest": "the /backtest page renders this payload server-side; the "
+                     "endpoint exists because agents read the verification too",
     "/api/replay": "agent-facing point-in-time replay; the ledger is still "
                    "too thin for a screen and /data reports when that changes",
     "/api/replay/leak": "agent-facing leak measurement over the same replay",

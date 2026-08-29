@@ -664,6 +664,46 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
+	// 신호 검증
+	pi.registerTool({
+		name: "market_backtest",
+		label: "신호 검증",
+		description:
+			"국면 판정이 2023-12-18~2026-08-28 655거래일 동안 실제로 무슨 정보를 " +
+			"담았는지. precision 보다 lift 를 먼저 볼 것 — lift 는 정밀도에서 " +
+			"기저율을 뺀 값이고, 0 이하면 그 판정은 정보를 담지 않았다는 뜻이다. " +
+			"limits 는 결과와 함께 인용해야 한다: 선견 누출은 통제, 개정 누출은 " +
+			"미통제, 임계값은 평가 대상이지 조정 대상이 아니다.",
+		parameters: Type.Object({
+			market: Type.Optional(
+				Type.String({ description: "korea (기본) 또는 us" }),
+			),
+		}),
+		async execute({ market }: { market?: string }) {
+			const data = await apiGet(
+				`/api/backtest${market ? `?market=${encodeURIComponent(market)}` : ""}`,
+			);
+			if (!data.available) {
+				return { content: [{ type: "text", text: data.reason }], details: data };
+			}
+			const c = data.contingency;
+			const lines = [
+				`${data.benchmark} ${data.window.start}~${data.window.end} (${data.window.days}거래일) · ` +
+					`사건 정의 ${data.declared.drawdown_pct}%/${data.declared.horizon_days}거래일`,
+				`적중 ${c.hit} · 오탐 ${c.false_alarm} · 미탐 ${c.miss} · 정상기각 ${c.correct_rejection}`,
+				`정밀도 ${c.precision ?? "—"}% · 기저율 ${c.base_rate}% · lift ${c.lift ?? "—"}`,
+				...Object.entries(data.conditional).map(
+					([name, d]: [string, any]) =>
+						`  ${name}: n=${d.forward_return.count} 전방수익 중앙 ${d.forward_return.median}% ` +
+						`낙폭 중앙 ${d.forward_drawdown.median}%`,
+				),
+				`churn 전환 ${data.churn.changes}회 · 지속 중앙값 ${data.churn.median_run_days}일`,
+				...data.limits.map((l: string) => `· ${l}`),
+			];
+			return { content: [{ type: "text", text: lines.join("\n") }], details: data };
+		},
+	});
+
 	// 과거 시점 재생
 	pi.registerTool({
 		name: "market_replay",

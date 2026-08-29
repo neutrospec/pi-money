@@ -279,7 +279,7 @@ class InstantMigrationTests(unittest.TestCase):
                 "2026-08-23T07:57:57+00:00",
             )
 
-    def test_schema_v8_columns_exist(self):
+    def test_migrations_run_to_the_current_schema_version(self):
         db.init_db()
         with db.get_conn() as conn:
             quote_columns = {
@@ -290,7 +290,7 @@ class InstantMigrationTests(unittest.TestCase):
             }
         self.assertIn("session_date", quote_columns)
         self.assertIn("date_kind", catalog_columns)
-        self.assertEqual(db.get_meta("schema_version"), "8")
+        self.assertEqual(db.get_meta("schema_version"), "9")
 
     def test_index_quote_keeps_a_known_session_when_a_refresh_omits_it(self):
         db.init_db()

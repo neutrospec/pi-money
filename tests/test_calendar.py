@@ -130,7 +130,7 @@ class DatabaseTests(TemporaryDatabaseTest):
         self.assertEqual("{}", row["source_options_json"])
         self.assertEqual(5, row["max_age_days"])
         self.assertEqual('{"item_code2":"2"}', selected["source_options_json"])
-        self.assertEqual("8", db.get_meta("schema_version"))
+        self.assertEqual("9", db.get_meta("schema_version"))
 
     def test_replace_index_refuses_empty_input(self):
         db.init_db()
@@ -2065,6 +2065,7 @@ class McpTests(TemporaryDatabaseTest):
             "market_derived_metrics", "market_breadth",
             "market_datasets", "market_daily",
             "market_layers", "market_replay", "market_replay_readiness",
+            "market_backtest",
         }, names)
         self.assertEqual("ok", mcp_server.market_health()["database_integrity"])
         self.assertIn("reconciliation", mcp_server.market_health())

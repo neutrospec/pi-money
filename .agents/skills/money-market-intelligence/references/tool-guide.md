@@ -1,6 +1,6 @@
 # Tool guide
 
-MCP and pi expose the same 25 canonical capabilities. MCP reads SQLite
+MCP and pi expose the same 26 canonical capabilities. MCP reads SQLite
 directly; pi calls the matching cache-only REST endpoint.
 
 | Tool | Use it for | Important inputs |
@@ -28,6 +28,7 @@ directly; pi calls the matching cache-only REST endpoint.
 | `market_derived_metrics` | Aligned macro transformations and 20/60-day cross-asset relative strength | none |
 | `market_breadth` | KOSPI/KOSDAQ advance-decline, turnover, concentration, and bounded 20-day breadth | none |
 | `market_layers` | The five evidence layers — policy, growth, liquidity, credit, breadth — with per-layer confidence. Use it for "what part of the economy is saying what" rather than "what contradicts what" | none |
+| `market_backtest` | What a regime verdict actually meant over 655 replayed trading days. Read it before quoting a verdict as though it predicted anything | optional `market`: `korea` (default) or `us` |
 | `market_replay` | The verdicts this repository could have produced on a past date. Use it to check whether a reading would have held at the time; never to claim it did | `date` (YYYY-MM-DD, KST); `mode`: `observed` (default) or `vintage` |
 | `market_replay_readiness` | From which date each brief input can be replayed. Read this before quoting a vintage replay | none |
 
@@ -87,6 +88,26 @@ than by what contradicts what. Two things about it are easy to misread:
 evidence reported and how much arrived past its own update cycle, counted
 separately because the causes differ — one is a collector problem, the other
 is a publication schedule nobody controls.
+
+## Reading the backtest
+
+`market_backtest` grades each replayed verdict against what the benchmark did
+next. Three rules for quoting it:
+
+- **Lift before precision.** Lift is precision minus the base rate — what the
+  warning added over knowing nothing. Precision of 20% against an 18.6% base
+  rate is noise wearing a respectable number, and only the pair shows it. Never
+  quote precision alone.
+- **`conditional` is the threshold-free half** and usually says more. If the
+  verdicts share a forward distribution, the classifier separates nothing and
+  no choice of stress threshold rescues that.
+- **Count episodes, not days.** Consecutive warning days are one event. A
+  statistic built on 22 days that are really 7 episodes has the power of 7.
+
+`limits` travels with the result: look-ahead is controlled, revision leak is
+not, and the thresholds are evaluated rather than tuned. A result suggesting
+the 80/20 cuts are wrong is a finding for the owner to decide on — never
+something to act on or to describe as the system having learned.
 
 ## Reading a point-in-time replay
 

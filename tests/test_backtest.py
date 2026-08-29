@@ -1,0 +1,158 @@
+"""The backtest, and the leak surface it introduces.
+
+`app.pit` protects the verdict side. Pairing a verdict at D with what happened
+by D+N is new code with its own date arithmetic, and that is where look-ahead
+walks back in — so most of this file is about the forward window rather than
+about any statistic computed from it.
+"""
+from __future__ import annotations
+
+import tempfile
+import unittest
+from pathlib import Path
+
+from app import backtest, db, pit
+
+
+class TemporaryDatabaseTest(unittest.TestCase):
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.original_path = db.DB_PATH
+        db.DB_PATH = Path(self.tempdir.name) / "money-test.db"
+        db.init_db()
+
+    def tearDown(self):
+        db.DB_PATH = self.original_path
+        self.tempdir.cleanup()
+
+    def index(self, symbol, values, start_day=1):
+        db.replace_index_points(symbol, [
+            {"date": f"2026-01-{start_day + offset:02d}", "value": float(value)}
+            for offset, value in enumerate(values)
+        ])
+
+
+class ForwardWindowTests(TemporaryDatabaseTest):
+    """The outcome window is strictly after D. This is the leak surface."""
+
+    def test_the_window_excludes_the_day_it_is_measured_from(self):
+        # Including D's own close would grade a verdict partly on the bar it
+        # was made from — the outcome-side twin of look-ahead.
+        self.index("^KS11", [100, 90, 95, 96, 97])
+        out = backtest.forward("^KS11", horizon=2)
+        self.assertEqual(90.0, out["2026-01-01"]["low"])
+        self.assertEqual(-10.0, out["2026-01-01"]["drawdown_pct"])
+        # From the 2nd, the 100 is behind and must not appear.
+        self.assertEqual(95.0, out["2026-01-02"]["low"])
+
+    def test_the_window_never_reaches_backwards(self):
+        self.index("^KS11", [50, 100, 101, 102, 103])
+        out = backtest.forward("^KS11", horizon=2)
+        self.assertEqual(101.0, out["2026-01-02"]["low"])
+        self.assertGreater(out["2026-01-02"]["drawdown_pct"], 0)
+
+    def test_a_day_whose_horizon_has_not_finished_is_omitted(self):
+        # A truncated window is not a smaller window; it is a day whose outcome
+        # has not happened. Counting it would read the unfinished present as
+        # evidence of calm.
+        self.index("^KS11", [100, 99, 98, 97, 96])
+        out = backtest.forward("^KS11", horizon=3)
+        self.assertEqual(["2026-01-01", "2026-01-02"], sorted(out))
+
+    def test_the_horizon_counts_sessions_not_calendar_days(self):
+        db.replace_index_points("^KS11", [
+            {"date": "2026-01-02", "value": 100.0},
+            {"date": "2026-01-09", "value": 90.0},   # a week later
+            {"date": "2026-01-12", "value": 95.0},
+        ])
+        out = backtest.forward("^KS11", horizon=2)
+        self.assertEqual(90.0, out["2026-01-02"]["low"])
+
+
+class ContingencyTests(TemporaryDatabaseTest):
+    def rows(self, pairs):
+        return [{"date": f"2026-01-{day:02d}", "korea_regime": verdict}
+                for day, verdict in pairs]
+
+    def outcomes(self, drawdowns):
+        return {f"2026-01-{day:02d}": {"drawdown_pct": value, "return_pct": value}
+                for day, value in drawdowns}
+
+    def test_the_four_cells_are_counted_as_named(self):
+        rows = self.rows([(1, "risk_off"), (2, "risk_off"),
+                          (3, "neutral"), (4, "neutral")])
+        outcomes = self.outcomes([(1, -10.0), (2, -1.0), (3, -10.0), (4, -1.0)])
+        table = backtest.contingency(rows, outcomes, field="korea_regime")
+        self.assertEqual(
+            (1, 1, 1, 1),
+            (table["hit"], table["false_alarm"], table["miss"],
+             table["correct_rejection"]),
+        )
+
+    def test_precision_is_reported_with_the_base_rate_that_gives_it_meaning(self):
+        # Warn every day: precision equals the base rate exactly, and lift is
+        # zero. Precision alone would read as 50% skill.
+        rows = self.rows([(day, "risk_off") for day in range(1, 5)])
+        outcomes = self.outcomes([(1, -10.0), (2, -10.0), (3, -1.0), (4, -1.0)])
+        table = backtest.contingency(rows, outcomes, field="korea_regime")
+        self.assertEqual(50.0, table["precision"])
+        self.assertEqual(50.0, table["base_rate"])
+        self.assertEqual(0.0, table["lift"])
+
+    def test_a_classifier_that_never_warns_reports_no_precision_not_zero(self):
+        rows = self.rows([(day, "neutral") for day in range(1, 5)])
+        outcomes = self.outcomes([(day, -10.0) for day in range(1, 5)])
+        table = backtest.contingency(rows, outcomes, field="korea_regime")
+        self.assertIsNone(table["precision"])
+        self.assertEqual(4, table["miss"])
+        self.assertEqual(0.0, table["recall"])
+
+    def test_a_day_with_no_finished_outcome_is_dropped_from_every_cell(self):
+        rows = self.rows([(1, "risk_off"), (2, "risk_off")])
+        table = backtest.contingency(
+            rows, self.outcomes([(1, -10.0)]), field="korea_regime")
+        self.assertEqual(1, table["days"])
+
+    def test_the_threshold_is_a_floor_not_a_range(self):
+        rows = self.rows([(1, "risk_off"), (2, "risk_off")])
+        outcomes = self.outcomes([(1, -7.0), (2, -6.999)])
+        table = backtest.contingency(rows, outcomes, field="korea_regime",
+                                     threshold=7.0)
+        self.assertEqual((1, 1), (table["hit"], table["false_alarm"]))
+
+
+class ChurnTests(unittest.TestCase):
+    def test_run_lengths_are_reported_not_just_a_change_count(self):
+        rows = [{"korea_regime": name} for name in
+                ["neutral"] * 5 + ["risk_off"] * 2 + ["neutral"] * 10]
+        report = backtest.churn(rows, field="korea_regime")
+        self.assertEqual((2, 3, 2, 10), (
+            report["changes"], report["runs"],
+            report["shortest_run_days"], report["longest_run_days"]))
+
+    def test_an_empty_series_does_not_report_a_change(self):
+        report = backtest.churn([], field="korea_regime")
+        self.assertEqual((0, 0), (report["changes"], report["runs"]))
+
+
+class DeclaredConstantTests(unittest.TestCase):
+    """The declarations are the contract; a silent edit is the failure."""
+
+    def test_the_declared_pair_appears_in_the_reported_grid(self):
+        self.assertIn(backtest.DRAWDOWN_PCT, backtest.GRID_PCT)
+        self.assertIn(backtest.HORIZON_DAYS, backtest.GRID_DAYS)
+
+    def test_the_window_start_is_where_the_korean_verdict_first_completes(self):
+        # Re-derived rather than trusted: if the underlying history changes,
+        # the declared window has to move with it or say so out loud.
+        from datetime import date, timedelta
+
+        start = date.fromisoformat(backtest.WINDOW_START)
+        after = pit.replay(backtest.WINDOW_START)["korea_regime"]
+        self.assertEqual(after["component_total"], after["component_count"])
+        before = pit.replay((start - timedelta(days=3)).isoformat())["korea_regime"]
+        self.assertLess(before["component_count"], before["component_total"])
+
+
+if __name__ == "__main__":
+    unittest.main()

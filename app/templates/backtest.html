@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% block title %}신호 검증 — Money Market Intelligence{% endblock %}
+{% block content %}
+  {% macro word(name) -%}
+    {% if name=='risk_off' %}위험 회피{% elif name=='risk_on' %}위험 선호
+    {% elif name=='neutral' %}중립{% else %}판정 보류{% endif %}
+  {%- endmacro %}
+
+  <div class="pagehead">
+    <h1>🔬 신호 검증</h1>
+    <div class="sub">이 판정들이 과거에 무슨 정보를 담았는가 — 매매 규칙이 아니라 서술입니다</div>
+  </div>
+
+  {% if not r.available %}
+  <div class="card"><div class="card-title">아직 재생되지 않았습니다</div>
+    <div style="font-size:13px;color:#c9d1d9;">{{ r.reason }}</div></div>
+  {% else %}
+
+  <div class="card" style="border-left:4px solid #6e7681;">
+    <div style="display:flex;flex-wrap:wrap;gap:24px;align-items:baseline;">
+      <div><span style="color:#8b949e;font-size:12px;">대상</span>
+        <div style="font-size:17px;font-weight:700;">{{ r.benchmark }}
+          <span style="font-size:12px;color:#8b949e;font-weight:400;">{{ r.window.start }} ~ {{ r.window.end }} · {{ r.window.days }}거래일</span></div></div>
+      <div><span style="color:#8b949e;font-size:12px;">선언한 사건</span>
+        <div style="font-size:17px;font-weight:700;">{{ r.declared.drawdown_pct }}% / {{ r.declared.horizon_days }}거래일</div></div>
+      <div><span style="color:#8b949e;font-size:12px;">경고 = {{ word(r.declared.warning) }} 판정</span>
+        <div style="font-size:17px;font-weight:700;">{{ r.contingency.warned }}일</div></div>
+    </div>
+    <div style="margin-top:12px;font-size:12px;">
+      {% for m in ['korea','us'] %}
+        <a href="/backtest?market={{ m }}" style="margin-right:10px;{% if r.market==m %}font-weight:700;{% else %}color:#8b949e;{% endif %}">
+          {% if m=='korea' %}한국 국면{% else %}미국 국면{% endif %}</a>
+      {% endfor %}
+    </div>
+    <div style="color:#6e7681;font-size:11px;margin-top:10px;">{{ r.warning }}</div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">오탐·미탐
+      <span style="color:#8b949e;font-weight:400;font-size:12px;">정밀도는 기저율과 함께 읽어야 뜻이 생깁니다</span></div>
+    <div class="scroll"><table>
+      <thead><tr><th></th><th>스트레스 왔다</th><th>안 왔다</th></tr></thead>
+      <tbody>
+        <tr><td>경고했다</td>
+          <td style="color:#3fb950;">적중 {{ r.contingency.hit }}</td>
+          <td style="color:#d29922;">오탐 {{ r.contingency.false_alarm }}</td></tr>
+        <tr><td>경고 없었다</td>
+          <td style="color:#f85149;">미탐 {{ r.contingency.miss }}</td>
+          <td style="color:#8b949e;">정상 기각 {{ r.contingency.correct_rejection }}</td></tr>
+      </tbody>
+    </table></div>
+    <div style="margin-top:12px;display:flex;flex-wrap:wrap;gap:22px;font-size:13px;">
+      <div><span style="color:#8b949e;font-size:11px;">정밀도</span><div style="font-weight:700;">{{ r.contingency.precision if r.contingency.precision is not none else '—' }}%</div></div>
+      <div><span style="color:#8b949e;font-size:11px;">기저율</span><div style="font-weight:700;">{{ r.contingency.base_rate }}%</div></div>
+      <div><span style="color:#8b949e;font-size:11px;">lift (정밀도 − 기저율)</span>
+        <div style="font-weight:700;color:{% if r.contingency.lift and r.contingency.lift > 0 %}#3fb950{% else %}#f85149{% endif %};">
+          {{ r.contingency.lift if r.contingency.lift is not none else '—' }}</div></div>
+      <div><span style="color:#8b949e;font-size:11px;">재현율</span><div style="font-weight:700;">{{ r.contingency.recall if r.contingency.recall is not none else '—' }}%</div></div>
+    </div>
+    <div style="font-size:12px;color:#8b949e;margin-top:10px;line-height:1.7;">
+      <b>lift</b>는 경고가 아무것도 모르는 상태에 얹은 값입니다. 0 이하면 그 판정은
+      이 사건에 대해 정보를 담지 않았다는 뜻이고, 정밀도가 아무리 그럴듯해도 마찬가지입니다.
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">판정별 전방 결과
+      <span style="color:#8b949e;font-weight:400;font-size:12px;">임계값에 기대지 않는 쪽 — 이게 더 많은 정보를 담습니다</span></div>
+    <div class="scroll"><table>
+      <thead><tr><th>판정</th><th>일수</th><th>{{ r.declared.horizon_days }}일 수익 중앙값</th>
+        <th>하위10%</th><th>낙폭 중앙값</th><th>최악 낙폭</th></tr></thead>
+      <tbody>
+      {% for name, d in r.conditional.items() %}
+      <tr>
+        <td>{{ word(name) }}</td>
+        <td class="num">{{ d.forward_return.count }}</td>
+        <td class="num">{{ '%+.2f'|format(d.forward_return.median) }}%</td>
+        <td class="num">{{ '%+.2f'|format(d.forward_return.p10) }}%</td>
+        <td class="num">{{ '%+.2f'|format(d.forward_drawdown.median) }}%</td>
+        <td class="num" style="color:#f85149;">{{ '%+.2f'|format(d.forward_drawdown.worst) }}%</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">임계 격자
+      <span style="color:#8b949e;font-weight:400;font-size:12px;">선언값 하나가 결론을 지지 않도록</span></div>
+    <div class="scroll"><table>
+      <thead><tr><th>사건</th><th>기저율</th><th>경고</th><th>적중</th><th>정밀도</th><th>lift</th></tr></thead>
+      <tbody>
+      {% for g in r.grid %}
+      <tr{% if g.declared %} style="background:#161b22;font-weight:600;"{% endif %}>
+        <td>{{ g.threshold_pct }}% / {{ g.horizon_days }}일{% if g.declared %} <span style="color:#58a6ff;font-size:10px;">선언</span>{% endif %}</td>
+        <td class="num">{{ g.base_rate }}%</td>
+        <td class="num">{{ g.warned }}</td>
+        <td class="num">{{ g.hit }}</td>
+        <td class="num">{{ g.precision if g.precision is not none else '—' }}</td>
+        <td class="num" style="color:{% if g.lift and g.lift > 0 %}#3fb950{% else %}#f85149{% endif %};">{{ g.lift if g.lift is not none else '—' }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">쓸 수 있는 판정인가 — churn과 타이밍</div>
+    <div style="display:flex;flex-wrap:wrap;gap:24px;font-size:13px;">
+      <div><span style="color:#8b949e;font-size:11px;">판정 전환</span><div style="font-weight:700;">{{ r.churn.changes }}회</div></div>
+      <div><span style="color:#8b949e;font-size:11px;">한 판정 지속 중앙값</span><div style="font-weight:700;">{{ r.churn.median_run_days }}일</div></div>
+      <div><span style="color:#8b949e;font-size:11px;">최단 / 최장</span><div style="font-weight:700;">{{ r.churn.shortest_run_days }} / {{ r.churn.longest_run_days }}일</div></div>
+      <div><span style="color:#8b949e;font-size:11px;">스트레스일 중 사전경고</span><div style="font-weight:700;">{{ r.timing.warned_within_horizon }}/{{ r.timing.stress_days }}</div></div>
+      <div><span style="color:#8b949e;font-size:11px;">선행 중앙값</span><div style="font-weight:700;">{{ r.timing.median_lead_days if r.timing.median_lead_days is not none else '—' }}일</div></div>
+    </div>
+    <div style="font-size:12px;color:#8b949e;margin-top:10px;">
+      사흘마다 뒤집히는 분류기는 정확도와 무관하게 쓸 수 없습니다. 지속 일수가 정확도 숫자보다 그 점을 잘 말합니다.
+    </div>
+  </div>
+
+  <div class="card" style="border-left:3px solid #d29922;">
+    <div class="card-title">이 결과의 한계</div>
+    <ul style="font-size:13px;color:#c9d1d9;line-height:1.8;margin:0;padding-left:20px;">
+      {% for l in r.limits %}<li>{{ l }}</li>{% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+{% endblock %}

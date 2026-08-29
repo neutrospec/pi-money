@@ -17,7 +17,7 @@ load_dotenv(PROJECT_ROOT / ".env")
 
 DEFAULT_DB_PATH = PROJECT_ROOT / "data" / "money.db"
 DB_PATH = Path(os.environ.get("MONEY_DB_PATH", DEFAULT_DB_PATH))
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS events (
@@ -57,6 +57,18 @@ CREATE TABLE IF NOT EXISTS indicator_vintages (
     value REAL NOT NULL,
     source TEXT,
     PRIMARY KEY (indicator, date, retrieved_at)
+);
+
+CREATE TABLE IF NOT EXISTS backtest_verdicts (
+    date TEXT PRIMARY KEY,
+    mode TEXT NOT NULL,
+    korea_regime TEXT NOT NULL,
+    korea_score INTEGER NOT NULL,
+    korea_active INTEGER NOT NULL,
+    korea_components TEXT NOT NULL,
+    us_regime TEXT NOT NULL,
+    us_score INTEGER NOT NULL,
+    computed_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS series_catalog (
@@ -1380,6 +1392,52 @@ def backfill_indicator_vintages(indicator: str) -> int:
              for row in rows],
         )
     return len(rows)
+
+
+def save_backtest_verdicts(rows: list[dict]) -> int:
+    """Store replayed verdicts so screens read cache rather than recompute.
+
+    One replay costs ~55ms and the window is 655 trading days, so a page that
+    computed this on request would take half a minute. The rest of the project
+    already draws this line — every screen reads cache and collection runs on
+    its own schedule — and a backtest is the same shape.
+    """
+    if not rows:
+        return 0
+    now = utc_now()
+    with get_conn() as conn:
+        conn.executemany(
+            """INSERT INTO backtest_verdicts
+               (date, mode, korea_regime, korea_score, korea_active,
+                korea_components, us_regime, us_score, computed_at)
+               VALUES (:date, :mode, :korea_regime, :korea_score, :korea_active,
+                       :korea_components, :us_regime, :us_score, :computed_at)
+               ON CONFLICT(date) DO UPDATE SET
+                 mode=excluded.mode, korea_regime=excluded.korea_regime,
+                 korea_score=excluded.korea_score,
+                 korea_active=excluded.korea_active,
+                 korea_components=excluded.korea_components,
+                 us_regime=excluded.us_regime, us_score=excluded.us_score,
+                 computed_at=excluded.computed_at""",
+            [{**row, "computed_at": now} for row in rows],
+        )
+    return len(rows)
+
+
+def get_backtest_verdicts(start: str | None = None, end: str | None = None) -> list[dict]:
+    query = "SELECT * FROM backtest_verdicts"
+    clauses, params = [], []
+    if start:
+        clauses.append("date >= ?")
+        params.append(start)
+    if end:
+        clauses.append("date <= ?")
+        params.append(end)
+    if clauses:
+        query += " WHERE " + " AND ".join(clauses)
+    query += " ORDER BY date"
+    with get_conn() as conn:
+        return [dict(row) for row in conn.execute(query, params).fetchall()]
 
 
 def vintage_arrivals(indicator: str) -> list[str]:

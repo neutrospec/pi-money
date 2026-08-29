@@ -12,7 +12,8 @@ from datetime import timedelta
 from mcp.server import MCPServer
 
 from app import (
-    analysis, brief as brief_module, correlation, coverage, dashboard, db,
+    analysis, backtest, brief as brief_module, correlation, coverage,
+    dashboard, db,
     explain, history_recovery, layers, market_metrics, normalize, pit,
     sentiment as sentiment_gauge, spillover as spillover_analysis,
 )
@@ -153,6 +154,30 @@ def market_layers() -> dict:
     that is a finding rather than something to average.
     """
     return layers.cards()
+
+
+@mcp.tool()
+def market_backtest(market: str = "korea") -> dict:
+    """Report what a regime verdict actually meant over 2023-12-18..2026-08-28.
+
+    Use this before quoting any regime verdict as though it carried predictive
+    weight. It replays 655 trading days through the same classifier code and
+    compares each verdict to what the benchmark did next.
+
+    Read ``lift`` before ``precision``. Lift is precision minus the base rate —
+    what the warning added over knowing nothing. A precision of 20% against an
+    18.6% base rate is not a 20% skill; it is noise, and only the pair shows
+    that. ``conditional`` is the threshold-free half and usually the more
+    informative one: if the verdicts have the same forward distribution, the
+    classifier separates nothing.
+
+    ``limits`` travels with the result and must travel with any quote of it.
+    In particular: look-ahead is controlled, revision leak is not, and the
+    thresholds are evaluated rather than tuned — a result suggesting the cuts
+    are wrong is a finding for the owner, not something the code acts on.
+    """
+    field = "us_regime" if market == "us" else "korea_regime"
+    return backtest.report(field)
 
 
 @mcp.tool()
