@@ -15,38 +15,38 @@ from app.collectors import indicators, indices
 from app.timeutil import kst_today, to_kst
 
 
-# A tile's direction says what a rise *means*, not whether it is good.  The
-# interface needs this to avoid painting a widening credit spread with the
-# same colour as a rising index.
-RISK = "up_is_risk"        # a rise tightens conditions or signals stress
-NEUTRAL = "neutral"        # a rise is neither tightening nor easing per se
+# What a rise means is a property of the series, so it is declared in the
+# catalogue and read from there. Keeping a second copy here is how the tile
+# colour and the analysis orientation would come to disagree.
+RISK = indicators.RISK
+NEUTRAL = indicators.NEUTRAL
 
 HEADLINE_GROUPS = [
     ("한국 자금시장", [
-        ("kr_base_rate", NEUTRAL),
-        ("kr_kofr", NEUTRAL),
-        ("kr_cd_91d", NEUTRAL),
-        ("kr_cp_91d", NEUTRAL),
-        ("kr_treasury_3y", NEUTRAL),
-        ("kr_treasury_10y", NEUTRAL),
-        ("kr_corp_bond_3y", NEUTRAL),
-        ("kr_usd", RISK),
+        "kr_base_rate",
+        "kr_kofr",
+        "kr_cd_91d",
+        "kr_cp_91d",
+        "kr_treasury_3y",
+        "kr_treasury_10y",
+        "kr_corp_bond_3y",
+        "kr_usd",
     ]),
     ("미국 금리·위험", [
-        ("us_rate", NEUTRAL),
-        ("us_2y", NEUTRAL),
-        ("us_10y", NEUTRAL),
-        ("us_hy_spread", RISK),
-        ("us_vix", RISK),
-        ("us_dollar_index", RISK),
+        "us_rate",
+        "us_2y",
+        "us_10y",
+        "us_hy_spread",
+        "us_vix",
+        "us_dollar_index",
     ]),
     ("실물·원자재", [
-        ("wti", NEUTRAL),
-        ("gold", NEUTRAL),
-        ("copper", NEUTRAL),
-        ("kr_cpi", NEUTRAL),
-        ("us_cpi", NEUTRAL),
-        ("kr_semiconductor_export_value", NEUTRAL),
+        "wti",
+        "gold",
+        "copper",
+        "kr_cpi",
+        "us_cpi",
+        "kr_semiconductor_export_value",
     ]),
 ]
 
@@ -56,7 +56,9 @@ HEADLINE_INDICES = [
 ]
 
 
-def _tile(key: str, spec: dict, direction: str, points: list[dict]) -> dict | None:
+def _tile(
+    key: str, spec: dict, direction: str | None, points: list[dict]
+) -> dict | None:
     if not points:
         return None
     latest = points[-1]
@@ -85,18 +87,19 @@ def headline_tiles() -> list[dict]:
     """Group the core series a person checks first, in reading order."""
     catalog = indicators.catalog()
     wanted = [
-        key for _, entries in HEADLINE_GROUPS for key, _ in entries
-        if key in catalog
+        key for _, keys in HEADLINE_GROUPS for key in keys if key in catalog
     ]
     tails = db.get_indicator_tails(wanted, limit=2)
     groups = []
-    for title, entries in HEADLINE_GROUPS:
+    for title, keys in HEADLINE_GROUPS:
         tiles = []
-        for key, direction in entries:
+        for key in keys:
             spec = catalog.get(key)
             if not spec:
                 continue
-            tile = _tile(key, spec, direction, tails.get(key, []))
+            tile = _tile(
+                key, spec, indicators.risk_direction(key), tails.get(key, [])
+            )
             if tile:
                 tiles.append(tile)
         if tiles:

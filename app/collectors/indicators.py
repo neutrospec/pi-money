@@ -713,6 +713,70 @@ def catalog() -> dict:
     return out
 
 
+# What a *rise* in this series means.  Not whether it is good — a rising
+# policy rate is neither stress nor relief on its own — but whether the move
+# tightens conditions or signals stress.  The interface needs it to avoid
+# painting a widening credit spread like a rising index, and the
+# normalization layer needs it to orient a percentile toward risk.
+RISK = "up_is_risk"
+NEUTRAL = "neutral"
+
+# Deliberately partial.  A series nobody has classified is left out and gets
+# no risk orientation at all, which is honest; a wrong default would be worse
+# than none, because every reading built on it would be oriented backwards.
+RISK_DIRECTION = {
+    # 상승이 여건을 조이거나 스트레스를 뜻하는 계열
+    "kr_usd": RISK,
+    "us_dollar_index": RISK,
+    "us_vix": RISK,
+    "kr_vkospi": RISK,
+    "us_ig_spread": RISK,
+    "us_bbb_spread": RISK,
+    "us_hy_spread": RISK,
+    "us_nfci": RISK,
+    "us_financial_stress": RISK,
+    "us_bank_lending_standards": RISK,
+    "kr_household_delinq": RISK,
+    "kr_put_call_volume": RISK,
+    "kr_put_call_value": RISK,
+    "kr_put_call_open_interest": RISK,
+    # 상승이 그 자체로 조임도 완화도 아닌 계열
+    "kr_base_rate": NEUTRAL,
+    "kr_kofr": NEUTRAL,
+    "kr_cd_91d": NEUTRAL,
+    "kr_cp_91d": NEUTRAL,
+    "kr_treasury_3y": NEUTRAL,
+    "kr_treasury_10y": NEUTRAL,
+    "kr_corp_bond_3y": NEUTRAL,
+    "us_rate": NEUTRAL,
+    "us_2y": NEUTRAL,
+    "us_10y": NEUTRAL,
+    "wti": NEUTRAL,
+    "gold": NEUTRAL,
+    "copper": NEUTRAL,
+    "kr_cpi": NEUTRAL,
+    "us_cpi": NEUTRAL,
+    "kr_semiconductor_export_value": NEUTRAL,
+}
+
+# Levels that mean revert instead of drifting with a cycle.  These are judged
+# against their whole record: a trailing year that happens to contain a crisis
+# would let the crisis set the baseline and score itself as ordinary.  VKOSPI
+# demonstrated exactly that — 56.29 read as the 41st percentile of its own
+# turbulent year and the 14th of three years.
+MEAN_REVERTING_LEVELS = {"kr_vkospi", "us_vix"}
+
+# Levels that only travel one way, so distribution position is arithmetic
+# rather than news.  Measured, not assumed: these sat above the 95th
+# percentile at 18 of the last 20 observation points.
+SATURATED_LEVELS = {"kr_call", "kr_cd_91d", "kr_msb_91d"}
+
+
+def risk_direction(key: str) -> str | None:
+    """What a rise means, or None when the series has not been classified."""
+    return RISK_DIRECTION.get(key)
+
+
 # Some series are produced by a collector that fetches a different thing —
 # the put/call ratio falls out of the KRX option table, VKOSPI is one row of
 # the derivative index table.  They belong in the catalog so agents can

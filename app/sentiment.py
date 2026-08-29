@@ -16,7 +16,8 @@ from __future__ import annotations
 from datetime import timedelta
 from functools import lru_cache
 
-from app import db, market_metrics
+from app import db, market_metrics, normalize
+from app.collectors import indicators
 from app.timeutil import kst_today
 
 
@@ -50,16 +51,12 @@ def _scale(value: float, low: float, high: float) -> float:
 
 
 def _percentile_score(value: float, history: list[float], *, invert: bool) -> float:
-    """Score a value by where it sits in its own recent distribution.
+    """Deprecated alias kept for readers of this module's older call sites.
 
-    Using the series' own history rather than a fixed threshold keeps the
-    reading meaningful for a series whose normal level drifts.
+    The scoring itself lives in :mod:`app.normalize` so that the gauge and the
+    regime classifier cannot drift apart on what a percentile means.
     """
-    if not history:
-        return 50.0
-    below = sum(1 for item in history if item < value)
-    percentile = below / len(history) * 100
-    return round(100 - percentile if invert else percentile, 1)
+    return normalize.percentile(value, history, invert=invert)
 
 
 def _series(key: str) -> list[dict]:
@@ -158,14 +155,21 @@ def _volatility() -> dict | None:
     points = _series("kr_vkospi")
     if len(points) < MIN_HISTORY["volatility"]:
         return None
-    values = [point["value"] for point in points]
+    # The window comes from the catalog, not from here. Implied volatility
+    # mean reverts, so it is judged against its whole record; a trailing year
+    # containing a crisis would let the crisis set the baseline. Reading the
+    # declaration rather than restating it is what stops this gauge and the
+    # regime classifier from scoring the same VKOSPI differently.
+    reading = normalize.position_for("kr_vkospi")
+    if not reading["available"]:
+        return None
     return {
         "key": "volatility",
         "label": "변동성 (VKOSPI)",
-        "score": _percentile_score(values[-1], values[-250:], invert=True),
-        "detail": f"VKOSPI {values[-1]:.2f}",
-        "as_of": points[-1]["date"],
-        "method": "최근 250거래일 분포상 백분위, 높을수록 공포",
+        "score": reading["risk_percentile"],
+        "detail": f"VKOSPI {reading['value']:.2f}",
+        "as_of": reading["as_of"],
+        "method": f"{reading['window_label']} 분포상 백분위, 높을수록 공포",
     }
 
 
@@ -213,14 +217,24 @@ def _credit() -> dict | None:
     days = sorted(low.keys() & base.keys())
     if len(days) < MIN_HISTORY["credit"]:
         return None
-    spreads = [low[day] - base[day] for day in days]
+    # A computed spread has no catalogue key, so the window is passed rather
+    # than looked up — the default trailing year, because a spread's normal
+    # level drifts with the rate cycle.
+    reading = normalize.position(
+        [{"date": day, "value": low[day] - base[day]} for day in days],
+        direction=indicators.RISK,
+        window=normalize.TRAILING_WINDOW,
+        minimum=MIN_HISTORY["credit"],
+    )
+    if not reading["available"]:
+        return None
     return {
         "key": "credit",
         "label": "신용 수요",
-        "score": _percentile_score(spreads[-1], spreads[-250:], invert=True),
-        "detail": f"회사채 BBB− 스프레드 {spreads[-1]:.2f}%p",
-        "as_of": days[-1],
-        "method": "최근 250거래일 분포상 백분위, 확대될수록 공포",
+        "score": reading["risk_percentile"],
+        "detail": f"회사채 BBB− 스프레드 {reading['value']:.2f}%p",
+        "as_of": reading["as_of"],
+        "method": f"{reading['window_label']} 분포상 백분위, 확대될수록 공포",
     }
 
 

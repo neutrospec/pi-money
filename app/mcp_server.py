@@ -13,7 +13,7 @@ from mcp.server import MCPServer
 
 from app import (
     analysis, correlation, coverage, dashboard, db, history_recovery,
-    market_metrics, sentiment as sentiment_gauge,
+    market_metrics, normalize, sentiment as sentiment_gauge,
     spillover as spillover_analysis,
 )
 from app.collectors import indices, indicators
@@ -258,7 +258,12 @@ def market_indicator_list(category: str | None = None) -> dict:
 
 @mcp.tool()
 def market_indicator(key: str, limit: int = 24) -> dict:
-    """Return up to 1000 cached observations and metadata for one indicator key."""
+    """Return cached observations, metadata, and distribution position for one key.
+
+    ``position`` places the latest observation in the series' own
+    distribution. It is a statement about where this value sits relative to
+    what this series usually does — not a signal, and not a forecast.
+    """
     catalog = indicators.catalog()
     if key not in catalog:
         return {"error": f"unknown indicator: {key}", "available": sorted(catalog)}
@@ -281,6 +286,7 @@ def market_indicator(key: str, limit: int = 24) -> dict:
         "priority": spec["priority"],
         "proxy": spec["proxy"],
         "description": indicators.indicator_description(key),
+        "position": normalize.position_for(key),
         "latest_date": points[-1]["date"] if points else None,
         "retrieved_at": stored.get("retrieved_at"),
         "points": points,

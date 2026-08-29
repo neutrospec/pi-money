@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from app import normalize
+from app.collectors import indicators
 from app.timeutil import kst_today
 
 
@@ -467,7 +469,8 @@ def market_regime(
 # weight is deliberate: a market above its 200-day average *and* deep below its
 # 52-week high is a bounce inside a crash, and making the two components
 # disagree is precisely what surfaces that state instead of averaging it away.
-KR_PERCENTILE_WINDOW = 250
+# The window policy lives with the series, not here; see app/normalize.py.
+KR_PERCENTILE_WINDOW = normalize.TRAILING_WINDOW
 KR_DRAWDOWN_WINDOW = 252
 KR_RISK_ON_PERCENTILE = 80.0
 KR_RISK_OFF_PERCENTILE = 20.0
@@ -488,12 +491,13 @@ KR_MIN_HISTORY = {
 
 
 def _risk_on_percentile(value: float, history: list[float], *, invert: bool) -> float:
-    """Where ``value`` sits in ``history``, oriented so 100 reads as risk-on."""
-    if not history:
-        return 50.0
-    below = sum(1 for item in history if item < value)
-    percentile = below / len(history) * 100
-    return round(100 - percentile if invert else percentile, 1)
+    """Where ``value`` sits in ``history``, oriented so 100 reads as risk-on.
+
+    Delegates to :mod:`app.normalize`, which is the single definition. This
+    classifier and the sentiment gauge scored the same VKOSPI differently for
+    as long as each carried its own copy.
+    """
+    return normalize.percentile(value, history, invert=invert)
 
 
 def _percentile_component(
@@ -637,7 +641,7 @@ def korea_regime(
     components = [
         _percentile_component(
             "volatility", "변동성", vkospi, invert=True, unit="",
-            note="VKOSPI", window=None,
+            note="VKOSPI", window=normalize.window_for("kr_vkospi"),
         ),
         _percentile_component(
             "credit", "회사채 신용", credit_spread, invert=True, unit="%p",

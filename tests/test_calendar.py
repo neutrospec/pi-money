@@ -14,7 +14,7 @@ import numpy as np
 
 from app import (
     analysis, backup, correlation, db, history_recovery, market_metrics,
-    registry, spillover,
+    dashboard, normalize, registry, sentiment, spillover,
 )
 from app.collectors import curated, indicators, krx
 from app.scheduler import Collector, Scheduler
@@ -409,6 +409,113 @@ class AnalysisTests(unittest.TestCase):
     def test_var_is_never_reported_as_negative_loss(self):
         rising = points([100 + index for index in range(100)])
         self.assertEqual(0.0, analysis.value_at_risk(rising)["var_1day_pct"])
+
+
+class NormalizationEngineTests(TemporaryDatabaseTest):
+    """One definition of "where does this value sit in its own distribution"."""
+
+    def test_extracted_primitive_reproduces_both_former_implementations(self):
+        """The refactor net: the two copies must survive as one, bit for bit.
+
+        ``analysis._risk_on_percentile`` and ``sentiment._percentile_score``
+        were byte-identical duplicates. Anything the new primitive returns has
+        to match what both used to, including the edge conventions — the
+        empty-history 50.0 is load-bearing for a component that has a value
+        but no distribution yet.
+        """
+        cases = [
+            (56.0, [20.0] * 100 + [80.0] * 100),
+            (0.688, [0.5] * 250),
+            (1.0, [1.0] * 10),                    # ties are not "below"
+            (5.0, []),                            # no distribution at all
+            (-0.5, [-1.0, 0.0, 1.0]),
+        ]
+        for value, history in cases:
+            for invert in (False, True):
+                with self.subTest(value=value, invert=invert):
+                    expected = analysis._risk_on_percentile(
+                        value, history, invert=invert
+                    )
+                    self.assertEqual(
+                        expected, normalize.percentile(value, history, invert=invert)
+                    )
+                    self.assertEqual(
+                        expected,
+                        sentiment._percentile_score(value, history, invert=invert),
+                    )
+
+    def test_window_policy_comes_from_the_catalog_not_the_call_site(self):
+        """Mean-reverting levels get the whole record, everything else a year."""
+        for key in indicators.MEAN_REVERTING_LEVELS:
+            self.assertIsNone(normalize.window_for(key), key)
+        self.assertEqual(
+            normalize.TRAILING_WINDOW, normalize.window_for("kr_treasury_3y")
+        )
+
+    def test_unclassified_series_gets_no_risk_orientation(self):
+        """A guessed direction would orient every downstream reading backwards."""
+        points = [{"date": f"2026-01-{d:02d}", "value": float(d)} for d in range(1, 29)]
+        plain = normalize.position(points * 3, direction=None, minimum=10)
+        risky = normalize.position(
+            points * 3, direction=indicators.RISK, minimum=10
+        )
+        self.assertIsNone(plain["risk_percentile"])
+        self.assertIsNone(plain["direction"])
+        self.assertIsNotNone(risky["risk_percentile"])
+        self.assertEqual(plain["percentile"], 100.0 - risky["risk_percentile"])
+
+    def test_thin_history_is_reported_not_estimated(self):
+        reading = normalize.position([{"date": "2026-01-01", "value": 1.0}])
+        self.assertFalse(reading["available"])
+        self.assertIn("60", reading["reason"])
+        self.assertEqual(1, reading["observations"])
+
+    def test_dashboard_directions_are_the_catalog_declarations(self):
+        """No second copy: the tile colour and the analysis orientation agree.
+
+        The declaration used to live in dashboard.py, where nothing connected
+        it to the percentile that reads the same property.
+        """
+        for _, keys in dashboard.HEADLINE_GROUPS:
+            for key in keys:
+                with self.subTest(key=key):
+                    self.assertIsNotNone(
+                        indicators.risk_direction(key),
+                        f"{key}: 상황판 타일은 방향이 선언돼 있어야 합니다",
+                    )
+
+    def test_sentiment_volatility_uses_the_declared_window(self):
+        """The gauge reads the policy rather than restating it.
+
+        Both this gauge and the regime classifier score VKOSPI. While each
+        carried its own window they disagreed — 38.4 against a trailing year,
+        13.7 against the record — on the same observation.
+        """
+        db.init_db()
+        values = [20.0] * 600 + [80.0] * 100 + [56.0]
+        db.save_indicator_points(
+            "kr_vkospi",
+            [
+                {"date": (date(2023, 1, 1) + timedelta(days=i)).isoformat(),
+                 "value": value}
+                for i, value in enumerate(values)
+            ],
+            "krx",
+        )
+        component = sentiment._volatility()
+        reading = normalize.position_for("kr_vkospi")
+
+        self.assertEqual(reading["risk_percentile"], component["score"])
+        self.assertIn(reading["window_label"], component["method"])
+        self.assertIn("전체", component["method"])  # not a trailing year
+
+    def test_empty_history_reads_as_the_middle_not_as_absence(self):
+        self.assertEqual(50.0, normalize.percentile(5.0, [], invert=False))
+        self.assertEqual(50.0, normalize.percentile(5.0, [], invert=True))
+
+    def test_ties_count_as_not_below(self):
+        self.assertEqual(0.0, normalize.percentile(1.0, [1.0, 1.0], invert=False))
+        self.assertEqual(100.0, normalize.percentile(1.0, [1.0, 1.0], invert=True))
 
 
 class KoreaRegimeTests(TemporaryDatabaseTest):

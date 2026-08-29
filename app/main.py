@@ -18,7 +18,7 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 from app import (
     analysis, correlation, coverage, dashboard, db, history_recovery,
-    market_metrics, registry, sentiment, spillover,
+    market_metrics, normalize, registry, sentiment, spillover,
 )
 from app.collectors import indices, indicators, krx, watchlist
 from app.collectors.indicators import categories
@@ -590,6 +590,10 @@ def api_indicator(
         "future": spec.get("future", []),
         "points": points,
         "desc": indicators.indicator_description(key),
+        # Where the latest observation sits in this series' own distribution.
+        # Additive and self-describing: unavailable readings carry the reason
+        # rather than a number nobody should trust.
+        "position": normalize.position_for(key),
         "latest_date": points[-1]["date"] if points else None,
         "retrieved_at": stored.get("retrieved_at"),
         "cached": True,

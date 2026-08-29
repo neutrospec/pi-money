@@ -13,7 +13,7 @@ directly; pi calls the matching cache-only REST endpoint. MCP reads SQLite direc
 | `market_quotes` | Curated watchlist's last collected quotes | optional category in MCP |
 | `market_indices` | Allowed global indices, symbols, latest observations | none |
 | `market_indicator_list` | Discover indicator keys, analysis group, core priority, proxy/source metadata, and latest/retrieval dates | optional exact category |
-| `market_indicator` | One indicator's cached time series | exact `key`; MCP `limit` 1–1000 |
+| `market_indicator` | One indicator's cached time series, plus `position` — where the latest value sits in the series' own distribution, with the window it was judged against | exact `key`; MCP `limit` 1–1000 |
 | `market_universe` | Search provider-discovered KRX instruments and datasets | `query`, `source`, `dataset`, `asset_type`, `limit` |
 | `market_datasets` | Which KRX daily tables are cached, and how much of each | none |
 | `market_daily` | Cached daily rows for one KRX table: options, futures, ETFs, bonds | `dataset` required; `symbol`, `date`, `limit` 1-500 |
