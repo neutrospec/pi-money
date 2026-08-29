@@ -31,11 +31,25 @@ from statistics import median
 from app import db, pit
 
 
-# The first day the Korean classifier reported all five components. One day
-# earlier it is 4/5 with volatility pending, because kr_vkospi history begins
-# 2023-10-10 and a distribution needs 60 observations. Measured, not chosen —
-# a test re-derives it so a data change cannot silently move the window.
-WINDOW_START = "2023-12-18"
+# The first day the Korean classifier produces a verdict at all — three of five
+# components, the classifier's own declared minimum. Two days earlier it is 2/5
+# and reports unknown. Both boundaries are measured, not chosen, and a test
+# re-derives them so a data change cannot move the window silently.
+#
+# These moved once already. Before the 2026-08-30 history backfill they were
+# both 2023-12-18, because the collectors fetched three years by default and
+# nothing in the window was older. The providers held far more; see
+# ``app.history_backfill``. The window went from 2.7 years to 19, which is the
+# difference between a record containing no sustained bear market and one
+# containing 2008, 2011, 2015, 2018, 2020 and 2022.
+WINDOW_START = "2007-06-26"
+
+# The first day all five vote. Between the two dates the verdict stands on
+# three or four components with volatility pending, because kr_vkospi begins
+# 2010-01-04 and a distribution needs 60 observations. Those years are a
+# legitimate verdict under the classifier's own rule and a *different* verdict
+# from a five-component one, so results are segmented rather than pooled.
+FULL_WINDOW_START = "2010-04-01"
 
 # The benchmark each regime is evaluated against. A Korean verdict judged by
 # the S&P would be measuring the wrong market.

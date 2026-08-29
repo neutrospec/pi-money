@@ -117,6 +117,44 @@ class KrxIndexBackfillTests(TemporaryDatabaseTest):
         self.assertGreater(result["added"], 0)
 
 
+class CoherenceTests(TemporaryDatabaseTest):
+    """Backfilled values carry no vintage, so two providers must agree."""
+
+    def seed(self, implied, drift):
+        from datetime import date, timedelta
+
+        start = date(2020, 1, 1)
+        price, prices, points = 100.0, [], []
+        for offset in range(300):
+            day = (start + timedelta(days=offset)).isoformat()
+            price *= 1 + (drift if offset % 2 else -drift)
+            prices.append({"date": day, "value": price})
+            points.append({"date": day, "value": implied})
+        db.replace_index_points("^KS11", prices)
+        db.save_indicator_points("kr_vkospi", points)
+
+    def test_an_implied_level_matching_realised_vol_is_not_flagged(self):
+        # ±1% alternating daily moves annualise to about 16%.
+        self.seed(implied=16.0, drift=0.01)
+        report = history_backfill.volatility_coherence()
+        self.assertEqual([], report["outliers"])
+        self.assertAlmostEqual(1.0, report["years"][0]["ratio"], delta=0.25)
+
+    def test_an_implied_level_divorced_from_realised_vol_is_flagged(self):
+        # Same quiet market, an implied level five times too high: exactly the
+        # shape a corrupted or rebased backfill would take.
+        self.seed(implied=90.0, drift=0.01)
+        self.assertEqual(["2020"], history_backfill.volatility_coherence()["outliers"])
+
+    def test_a_year_with_too_few_observations_is_skipped_not_scored(self):
+        db.replace_index_points("^KS11", [
+            {"date": "2020-01-01", "value": 100.0},
+            {"date": "2020-01-02", "value": 101.0},
+        ])
+        db.save_indicator_points("kr_vkospi", [{"date": "2020-01-02", "value": 20.0}])
+        self.assertEqual([], history_backfill.volatility_coherence()["years"])
+
+
 class LicenceTests(unittest.TestCase):
     def test_the_module_records_which_series_cannot_be_deepened(self):
         # us_ig_spread is capped by FRED at 2023-08-29 because ICE licenses a

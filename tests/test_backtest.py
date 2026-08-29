@@ -262,16 +262,30 @@ class DeclaredConstantTests(unittest.TestCase):
         self.assertIn(backtest.DRAWDOWN_PCT, backtest.GRID_PCT)
         self.assertIn(backtest.HORIZON_DAYS, backtest.GRID_DAYS)
 
-    def test_the_window_start_is_where_the_korean_verdict_first_completes(self):
-        # Re-derived rather than trusted: if the underlying history changes,
-        # the declared window has to move with it or say so out loud.
+    def test_the_window_starts_where_a_verdict_first_becomes_possible(self):
+        # Re-derived rather than trusted: the backfill moved this boundary by
+        # sixteen years, and a declared constant that no longer matches the
+        # data is worse than none.
         from datetime import date, timedelta
+        from app import analysis
 
         start = date.fromisoformat(backtest.WINDOW_START)
         after = pit.replay(backtest.WINDOW_START)["korea_regime"]
+        self.assertNotEqual("unknown", after["regime"])
+        self.assertGreaterEqual(after["component_count"],
+                                analysis.KR_MIN_ACTIVE_COMPONENTS)
+        before = pit.replay((start - timedelta(days=2)).isoformat())["korea_regime"]
+        self.assertEqual("unknown", before["regime"])
+
+    def test_the_full_window_starts_where_all_five_components_first_vote(self):
+        from datetime import date, timedelta
+
+        start = date.fromisoformat(backtest.FULL_WINDOW_START)
+        after = pit.replay(backtest.FULL_WINDOW_START)["korea_regime"]
         self.assertEqual(after["component_total"], after["component_count"])
-        before = pit.replay((start - timedelta(days=3)).isoformat())["korea_regime"]
+        before = pit.replay((start - timedelta(days=2)).isoformat())["korea_regime"]
         self.assertLess(before["component_count"], before["component_total"])
+        self.assertLess(backtest.WINDOW_START, backtest.FULL_WINDOW_START)
 
 
 if __name__ == "__main__":
