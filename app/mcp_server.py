@@ -537,15 +537,19 @@ def market_risk(symbol: str, years: int = 2) -> dict:
 def market_daily(
     dataset: str,
     symbol: str | None = None,
-    day: str | None = None,
+    date: str | None = None,
     limit: int = 50,
 ) -> dict:
     """Read cached KRX daily rows for one dataset: options, futures, ETFs, bonds.
 
     `market_universe` finds instruments; this returns their prices.  A dataset
-    is required because the tables are large — the option table alone holds
-    ~18,000 contracts per session — so an unfiltered read would be neither
-    useful nor affordable.  Narrow with `symbol` or `day` when you can.
+    is required because the tables are large — the option table alone stores
+    about 9,000 rows per session — so an unfiltered read would be neither
+    useful nor affordable.  Narrow with `symbol` or `date` when you can.
+
+    The parameter is `date` to match the REST endpoint and the pi tool; it was
+    `day` here alone, which meant the same documented call failed on one
+    surface.
     """
     from app.collectors import krx
 
@@ -559,7 +563,7 @@ def market_daily(
     if not 1 <= limit <= 500:
         return {"error": "limit must be between 1 and 500"}
     rows = db.get_market_daily(
-        source="krx", dataset=dataset, symbol=symbol, day=day, limit=limit
+        source="krx", dataset=dataset, symbol=symbol, day=date, limit=limit
     )
     # The provider payload is kept per row but is far too verbose to return.
     trimmed = [
@@ -571,7 +575,7 @@ def market_daily(
         "asset_type": known[dataset]["asset_type"],
         "count": len(trimmed),
         "rows": trimmed,
-        "filters": {"symbol": symbol, "date": day, "limit": limit},
+        "filters": {"symbol": symbol, "date": date, "limit": limit},
         "note": (
             "raw 공급자 payload는 응답에서 제외했습니다. 옵션·선물 행은 "
             "metadata에 콜/풋 구분·내재변동성·미결제약정을 담고 있습니다."

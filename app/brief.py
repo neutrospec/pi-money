@@ -106,10 +106,18 @@ def _flip_conditions(regime: dict) -> list[dict]:
             gap = None
             percentile = component.get("percentile")
             if percentile is not None:
-                target = (
-                    analysis.KR_RISK_ON_PERCENTILE if candidate > 0
-                    else analysis.KR_RISK_OFF_PERCENTILE
-                )
+                # Three targets, not two. Moving *to* a vote needs the cut for
+                # that vote; moving to 0 only needs to leave the band the
+                # component is currently in. Treating 0 like -1 asked a
+                # component to cross the far cut when the near one is enough.
+                if candidate > 0:
+                    target = analysis.KR_RISK_ON_PERCENTILE
+                elif candidate < 0:
+                    target = analysis.KR_RISK_OFF_PERCENTILE
+                elif component["score"] > 0:
+                    target = analysis.KR_RISK_ON_PERCENTILE
+                else:
+                    target = analysis.KR_RISK_OFF_PERCENTILE
                 gap = round(target - percentile, 1)
             out.append({
                 "key": component["key"],

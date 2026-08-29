@@ -67,7 +67,7 @@ curl --fail http://127.0.0.1:8077/api/health
 | `HISTORY_KRX_CALLS_PER_RUN` | 3 | 실행당 KRX 일별 표 상한 |
 | `HISTORY_INDEX_YEARS` | 20 | 글로벌 지수 과거 검증 범위 |
 | `HISTORY_KRX_BUSINESS_DAYS` | 20 | KRX 고정 과거 세대의 영업일 수 |
-| `HISTORY_KRX_MAX_ROWS_PER_RUN` | 50000 | 2차 KRX 실행당 저장 행 상한 |
+| `HISTORY_KRX_MAX_ROWS_PER_RUN` | 200000 | 2차 KRX 실행당 저장 행 상한 |
 
 2차 방어는 달력으로 거래일이나 관측일을 추정하지 않습니다. 첫 공급자 snapshot이 반환한 날짜를 manifest로 확정하고, 이후에는 로컬 행 소실만 재활성화합니다. 정상 빈 KRX 표는 `verified_empty`, 인증 문제는 `blocked`, 최대 시도 초과는 `exhausted`이므로 무한 자동 재시도가 없습니다. 상세 상태 전이는 [과거 복구 계획](../plan/historical-recovery.md)을 참고합니다.
 

@@ -1,6 +1,6 @@
 # 에이전트 연동
 
-웹과 에이전트는 수집을 트리거하지 않고 같은 SQLite 캐시를 읽습니다. 사용 환경에 따라 표준 MCP 또는 프로젝트 로컬 pi 확장을 선택하며, 두 인터페이스는 아래 16개 기능을 동일한 이름으로 제공합니다.
+웹과 에이전트는 수집을 트리거하지 않고 같은 SQLite 캐시를 읽습니다. 사용 환경에 따라 표준 MCP 또는 프로젝트 로컬 pi 확장을 선택하며, 두 인터페이스는 아래 22개 기능을 동일한 이름으로 제공합니다.
 
 ## 프로젝트 스킬
 
@@ -32,6 +32,11 @@ args: --directory /Users/nobocop/projects/money run python -m app.mcp_server
 | 도구 | 기능 |
 |------|------|
 | `market_health` | DB 무결성·마지막 수집·partial/error 수집기 |
+| `market_situation` | 첫 화면 상태를 한 번에 — 국면 판정·핵심 수준·파생 위험·이번 주 발표·최신성 |
+| `market_coverage` | 계열별 결측 등급(confirmed·candidate·unverifiable)과 복구 가능성 |
+| `market_sentiment` | 0~100 한국 위험선호와 구성요소별 근거·측정 불가 사유 |
+| `market_datasets` | 캐시된 KRX 표 목록과 보유량 |
+| `market_daily` | KRX 표 하나의 일별 시세 행 (`dataset` 필수, `symbol`·`date`로 좁힘) |
 | `market_brief` | 이번 주 분포 이동·불일치·판정을 뒤집는 조건(투표 산술) |
 | `market_events` | KST 기준 향후 공식 경제 일정 |
 | `market_quotes` | 관심 종목의 마지막 수집 시세 |
@@ -64,7 +69,7 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8077
 pi
 ```
 
-pi도 위 표의 16개 도구를 같은 이름으로 제공합니다. 일정의 `days`는 서버가 KST 오늘을 기준으로 계산하므로 에이전트 프로세스의 로컬 시간대와 무관합니다. API 오류 시 HTTP 상태뿐 아니라 서버의 `detail` 메시지도 표시합니다.
+pi도 위 표의 22개 도구를 같은 이름으로 제공합니다. 일정의 `days`는 서버가 KST 오늘을 기준으로 계산하므로 에이전트 프로세스의 로컬 시간대와 무관합니다. API 오류 시 HTTP 상태뿐 아니라 서버의 `detail` 메시지도 표시합니다.
 
 ## 해석 원칙
 

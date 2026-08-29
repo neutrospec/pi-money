@@ -14,7 +14,7 @@ flowchart LR
 
     Registry[수집기 registry<br/>주기·최신성·부분 실패]
     Scheduler[영속 scheduler<br/>단일 직렬 실행]
-    SQLite[(SQLite schema v7<br/>현재값·빈티지·공급자 메타데이터·자동 유니버스·복구 ledger)]
+    SQLite[(SQLite schema v8<br/>현재값·빈티지·공급자 메타데이터·자동 유니버스·복구 ledger)]
     Web[FastAPI 웹]
     REST[cache-only REST]
     MCP[MCP stdio]
@@ -60,7 +60,7 @@ flowchart TD
 
 ### 저장
 
-`app/db.py`가 schema v7과 멱등 마이그레이션을 소유합니다.
+`app/db.py`가 schema v8과 멱등 마이그레이션을 소유합니다.
 
 | 테이블 | 책임 |
 |--------|------|
@@ -85,18 +85,18 @@ flowchart TD
 
 `app/collectors/krx.py`는 개별 심볼 목록을 갖지 않습니다. KRX의 날짜별 시장 테이블 한 건을 요청해 응답의 모든 행을 저장하고, 처음 본 종목을 `market_instruments`에 자동 등록합니다.
 
-- 기본 `balanced`: 13개 데이터셋, 전체 지수군·KOSPI/KOSDAQ/KONEX 주식·ETF/ETN·일반상품
+- 기본 `balanced`: 14개 데이터셋, 전체 지수군·KOSPI/KOSDAQ/KONEX 주식·ETF/ETN·일반상품
 - `light`: 7개 데이터셋, 대표 지수군·ETF·일반상품
 - `all`: KRX 공개 카탈로그 31개 데이터셋. ELW·채권·선물·옵션·ESG까지 포함
 - 최초 최근 5거래일만 채우고 이후 일별 증분 수집
-- 데이터셋당 20,000행, 실행당 100,000행을 넘으면 저장 전 중단
+- 데이터셋당 60,000행, 실행당 400,000행을 넘으면 저장 전 중단(`KRX_MAX_ROWS_PER_DATASET`·`KRX_MAX_ROWS_PER_RUN`)
 - 성공 또는 휴장일 빈 응답을 데이터셋·일자별로 기록해 재시작 후 중복 호출 방지
 
 ### 소비자
 
 - `app/main.py`: 읽기 전용 웹과 REST API. 알 수 없는 심볼은 allowlist에서 거부합니다.
-- `app/mcp_server.py`: MCP 2.0 stdio 도구 16개. FastAPI 없이 DB를 직접 읽습니다.
-- `.pi/extensions/market.ts`: 같은 16개 기능을 로컬 REST로 제공하는 프로젝트 전용 pi 도구입니다.
+- `app/mcp_server.py`: MCP 2.0 stdio 도구 22개. FastAPI 없이 DB를 직접 읽습니다.
+- `.pi/extensions/market.ts`: 같은 22개 기능을 로컬 REST로 제공하는 프로젝트 전용 pi 도구입니다.
 - `.agents/skills/money-market-intelligence/`: 도구 선택, 최신성 확인, 금융 해석 한계를 규정하는 프로젝트 스킬입니다.
 
 운영 배치와 복구는 [operations.md](operations.md)를 참고하세요.

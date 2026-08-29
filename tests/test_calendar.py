@@ -739,6 +739,35 @@ class LearningLayerTests(TemporaryDatabaseTest):
                 for field in ("what", "why", "how", "watch", "caveat"):
                     self.assertTrue(written.get(field), f"{key}.{field}")
 
+    def test_the_explanation_graph_closes_on_itself(self):
+        """Following a "함께 볼 것" link must not land on a category blurb.
+
+        The learning layer's value is that a reader can follow the references.
+        A watch target with no explanation of its own sends someone who
+        clicked through to exactly the generic line the layer exists to
+        replace, so the graph has to be closed rather than merely large.
+        """
+        written = indicators.EXPLANATIONS
+        targets = {
+            target for entry in written.values() for target, _ in entry["watch"]
+        }
+        self.assertEqual([], sorted(targets - set(written)))
+
+    def test_every_classifier_input_explains_itself(self):
+        """A series the verdict stands on must be readable by whoever reads the verdict."""
+        inputs = {
+            # analysis.market_regime
+            "us_vix", "us_ig_spread",
+            # analysis.korea_regime (spread legs and the volatility series)
+            "kr_vkospi", "kr_corp_bond_3y", "kr_treasury_3y",
+            "kr_cp_91d", "kr_cd_91d",
+            # sentiment.gauge
+            "kr_corp_bond_bbb", "kr_put_call_volume",
+        }
+        catalog = indicators.catalog()
+        self.assertEqual([], sorted(inputs - set(catalog)))   # 오타 방지
+        self.assertEqual([], sorted(inputs - set(indicators.EXPLANATIONS)))
+
     def test_watch_references_are_real_catalog_keys(self):
         """The linkage seed must be followable, not prose gesturing at a topic."""
         catalog = indicators.catalog()
@@ -811,7 +840,13 @@ class LearningLayerTests(TemporaryDatabaseTest):
 
     def test_a_series_without_its_own_explanation_says_so(self):
         db.init_db()
-        composed = explain.explain("kr_ppi")
+        # Chosen from the catalogue rather than named, so writing one more
+        # explanation does not break the test that checks the fallback path.
+        key = next(
+            k for k in sorted(indicators.catalog())
+            if k not in indicators.EXPLANATIONS
+        )
+        composed = explain.explain(key)
         self.assertTrue(composed["fallback"])
         self.assertEqual({}, composed["layers"])
         self.assertTrue(composed["summary"])   # the category stand-in is still shown

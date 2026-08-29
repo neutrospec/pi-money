@@ -28,9 +28,21 @@ from app.collectors import indicators
 TRAILING_WINDOW = 250
 FULL_HISTORY = None
 
-# Enough observations to call something a distribution. Below this the
-# percentile is arithmetic, not evidence.
+# Enough observations to call something a distribution — scaled to what the
+# collection window can actually deliver. A flat 60 was a promise the system
+# could not keep: the collector requests three years, so a monthly series tops
+# out near 36 and would have waited forever while the reason string said
+# "60개 이상 쌓이면". A threshold nobody can reach is worse than a low one,
+# because it reads as "not yet" when the truth is "not ever, under this policy".
 MIN_OBSERVATIONS = 60
+MIN_OBSERVATIONS_BY_FREQUENCY = {"D": 60, "W": 52, "M": 30, "Q": 10, "A": 8}
+
+
+def minimum_for(key: str) -> int:
+    """How many observations this series needs before its position means anything."""
+    return MIN_OBSERVATIONS_BY_FREQUENCY.get(
+        indicators.cycle_of(key), MIN_OBSERVATIONS
+    )
 
 
 def percentile(value: float, history: list[float], *, invert: bool = False) -> float:
@@ -61,10 +73,15 @@ def window_for(key: str) -> int | None:
     )
 
 
-def window_label(window: int | None, observations: int) -> str:
+# What one observation is called, per publication cycle. A monthly series
+# measured over "36거래일" reads as six weeks when it is three years.
+PERIOD_WORD = {"D": "거래일", "W": "주", "M": "개월", "Q": "분기", "A": "년"}
+
+
+def window_label(window: int | None, observations: int, period: str = "거래일") -> str:
     if window is None:
-        return f"전체 {observations}거래일"
-    return f"최근 {min(window, observations)}거래일"
+        return f"전체 {observations}{period}"
+    return f"최근 {min(window, observations)}{period}"
 
 
 def position(
@@ -74,6 +91,7 @@ def position(
     window: int | None = TRAILING_WINDOW,
     minimum: int = MIN_OBSERVATIONS,
     subject: str = "이 계열",
+    period: str = "거래일",
 ) -> dict:
     """Place the latest observation in its own distribution.
 
@@ -115,9 +133,9 @@ def position(
         "risk_percentile": oriented,
         "direction": direction,
         "window": window,
-        "window_label": window_label(window, len(values)),
+        "window_label": window_label(window, len(values), period),
         "method": (
-            f"{window_label(window, len(values))} 분포에서의 위치. "
+            f"{window_label(window, len(values), period)} 분포에서의 위치. "
             "임계값이 아니라 계열 자신의 분포를 기준으로 삼습니다."
         ),
     }
@@ -180,6 +198,7 @@ def movement_for(key: str, *, lookback_days: int = LOOKBACK_DAYS) -> dict | None
         db.get_indicator_points(key),
         window=window_for(key),
         lookback_days=lookback_days,
+        minimum=minimum_for(key),
     )
 
 
@@ -193,7 +212,9 @@ def position_for(key: str) -> dict:
         db.get_indicator_points(key),
         direction=indicators.risk_direction(key),
         window=window_for(key),
+        minimum=minimum_for(key),
         subject=spec["label"],
+        period=PERIOD_WORD.get(indicators.cycle_of(key), "거래일"),
     )
     if reading["available"] and key in indicators.SATURATED_LEVELS:
         # Being at the top of the range is usually the signal — a policy rate
