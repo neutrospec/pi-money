@@ -27,7 +27,7 @@ See [references/tool-guide.md](references/tool-guide.md) for the canonical tool 
    - Use `market_indices` to find an allowed index symbol or exact display name.
    - Use `market_universe` for provider-discovered KRX instruments; this is broader than the quote watchlist.
    - Use `market_datasets` before `market_daily` when the KRX table name is uncertain. `market_daily` needs an explicit dataset because the option table alone holds ~18,000 contracts per session.
-3. For "what is going on right now", call `market_situation` once instead of assembling the same picture from a dozen single-series calls. It returns the regime verdict, core policy/funding/risk levels, derived spreads and liquidity, this week's high-impact releases, and a freshness line — each with its own observation date.
+3. For "what is going on right now", call `market_situation` once instead of assembling the same picture from a dozen single-series calls. It returns both regime verdicts (`regime` for the US, `korea_regime` for Korea), core policy/funding/risk levels, derived spreads and liquidity, this week's high-impact releases, and a freshness line — each with its own observation date.
 4. For risk appetite specifically, `market_sentiment` scores it 0-100 from collected inputs and shows each component. Report where components disagree rather than only the composite.
 5. Call the narrowest tool that answers the question. Do not combine every analysis by default.
    - For a broad market assessment, choose representative `core` series from the needed layers: `policy_rates`, `liquidity`, `credit_stress`, `growth_cycle`, `fx_external`, and `market_breadth`.
@@ -57,6 +57,8 @@ See [references/tool-guide.md](references/tool-guide.md) for the canonical tool 
 - Spillover uses generalized FEVD / Diebold-Yilmaz connectedness. Directional shock contribution is not structural causality.
 - Yield-curve inversion is one signal, not a standalone recession forecast or timing model.
 - RSI, MACD, Bollinger bands, moving-average crosses, and regime classification are heuristic or lagging descriptions, not trade instructions.
+- `market_regime` returns two verdicts. The top-level one reads US inputs only (VIX, US IG spread, S&P 200-day average); `korea_regime` reads Korean inputs and scores each against its own distribution rather than an absolute cut. Never quote the US verdict as the state of the Korean market. When the two disagree, report both and say which inputs drove each — the disagreement is evidence about decoupling, not a defect.
+- `korea_regime` states `component_count` / `component_total` and lists `pending` components whose history is too short to normalise. Quote the count with the verdict, and never treat a pending component as neutral — it did not vote.
 - Historical VaR is a loss quantile, not the maximum possible or maximum expected loss. Report expected shortfall separately when available.
 - Sharpe, volatility, drawdown, VaR, regime, and technical results depend on the requested sample period.
 - Yahoo-backed values can be delayed or unavailable; do not call them official exchange data.

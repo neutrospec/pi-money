@@ -789,6 +789,8 @@ def api_risk(symbol: str, years: int = Query(default=2, ge=1, le=20)):
 
 @app.get("/api/analysis/regime")
 def api_regime():
+    # The US verdict stays at the top level so existing consumers keep their
+    # shape; the Korean one is added beside it rather than blended in.
     result = analysis.market_regime(
         db.get_indicator_points("us_vix"),
         db.get_indicator_points("us_ig_spread"),
@@ -796,6 +798,7 @@ def api_regime():
     )
     return {
         **result,
+        "korea_regime": dashboard.korea_regime(),
         "cached": True,
         "warning": "임계값 기반 참고 분류이며 현재 시장의 객관적 정답이 아닙니다.",
     }

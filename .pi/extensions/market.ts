@@ -72,9 +72,14 @@ export default function (pi: ExtensionAPI) {
 			);
 			const risk = (d.risk?.items || []).map((i: any) => `${i.label} ${i.value}${i.unit} (${i.date})`);
 			const events = (d.events || []).map((e: any) => `${e.date} ${e.time || "시간 미정"} ${e.title}`);
+			const kr = d.korea_regime || {};
+			const krPending = (kr.pending || []).map((p: any) => `${p.label} 제외(${p.reason})`);
 			const text =
-				`국면: ${r.regime} — ${(r.reasons || []).join(" · ")}\n` +
-				`관측일 VIX ${r.as_of?.vix || "-"} / 스프레드 ${r.as_of?.credit_spread || "-"} / S&P ${r.as_of?.sp500 || "-"}\n\n` +
+				`한국 국면: ${kr.regime} (구성요소 ${kr.component_count}/${kr.component_total}, 순점수 ${kr.score}) — ${(kr.reasons || []).join(" · ")}\n` +
+				(krPending.length ? `한국 국면 제외 항목: ${krPending.join(", ")}\n` : "") +
+				`미국 국면: ${r.regime} — ${(r.reasons || []).join(" · ")}\n` +
+				`관측일 한국 ${kr.as_of || "-"} / VIX ${r.as_of?.vix || "-"} / 스프레드 ${r.as_of?.credit_spread || "-"} / S&P ${r.as_of?.sp500 || "-"}\n` +
+				`두 분류기는 서로 다른 시장의 입력을 쓴다. 갈릴 때는 둘 다 보고할 것.\n\n` +
 				`${tiles.join("\n")}\n\n지수: ${idx.join(", ")}\n\n파생: ${risk.join(", ")}\n\n` +
 				(events.length ? `이번 주 주요 발표:\n${events.join("\n")}\n\n` : "") +
 				`수집: ${f.status} · 핵심 ${f.core_ready}/${f.core_total} 최신 · 공급자 지연 ${f.stale}`;
@@ -545,17 +550,26 @@ export default function (pi: ExtensionAPI) {
 		name: "market_regime",
 		label: "시장 상태 분류",
 		description:
-			"VIX·신용 스프레드·S&P 200일선의 최신 캐시를 임계값 규칙으로 분류한다. 객관적 현재 상태나 투자 판단이 아니다.",
+			"두 개의 규칙형 국면 분류를 함께 조회한다. 미국은 VIX·신용 스프레드·S&P 200일선의 임계값 규칙이고, 한국은 VKOSPI·회사채 스프레드·CP−CD·코스피 추세·낙폭을 각자의 분포 백분위로 채점한다. 객관적 현재 상태나 투자 판단이 아니다.",
 		parameters: Type.Object({}),
 		async execute() {
 			const data = await apiGet("/api/analysis/regime");
 			if (data.error) return { content: [{ type: "text", text: data.error }] };
-			const label = data.regime === "risk_on" ? "위험 선호 (Risk-on)" : data.regime === "risk_off" ? "위험 회피 (Risk-off)" : data.regime === "neutral" ? "중립" : "알 수 없음";
+			const name = (v: string) => v === "risk_on" ? "위험 선호 (Risk-on)" : v === "risk_off" ? "위험 회피 (Risk-off)" : v === "neutral" ? "중립" : "알 수 없음";
+			const kr = data.korea_regime || {};
+			const krLines = (kr.components || []).map((c: any) => `  ${c.label}: ${c.score > 0 ? "위험 선호" : c.score < 0 ? "위험 회피" : "중립"}${c.percentile != null ? ` (${c.percentile}점)` : ""} — ${c.detail}`);
+			const krPending = (kr.pending || []).map((p: any) => `  ${p.label}: 제외 — ${p.reason}`);
 			return {
 				content: [
 					{
 						type: "text",
-						text: `규칙형 시장 상태: ${label} (점수 ${data.score})\n관측일: ${JSON.stringify(data.as_of)}\n근거:\n` + data.reasons.join("\n") + `\n주의: ${data.warning}`,
+						text:
+							`한국 국면: ${name(kr.regime)} (순점수 ${kr.score}, 구성요소 ${kr.component_count}/${kr.component_total}, 관측일 ${kr.as_of || "-"})\n` +
+							krLines.join("\n") + (krPending.length ? `\n${krPending.join("\n")}` : "") +
+							`\n\n미국 국면: ${name(data.regime)} (점수 ${data.score})\n관측일: ${JSON.stringify(data.as_of)}\n` +
+							data.reasons.map((x: string) => `  ${x}`).join("\n") +
+							`\n\n산식: ${kr.method_note || "-"}\n` +
+							`두 분류기는 서로 다른 시장의 입력을 쓴다. 미국 국면을 한국 자산 판단에 그대로 옮기지 말 것.\n주의: ${data.warning}`,
 					},
 				],
 				details: data,

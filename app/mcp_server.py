@@ -95,17 +95,22 @@ def market_health() -> dict:
 def market_situation() -> dict:
     """Summarize the whole market state in one call before drilling into series.
 
-    Returns the regime verdict, core policy/funding/risk levels with their
-    observation dates, derived spreads and liquidity, this week's high-impact
-    releases, and a freshness line.  Prefer this over a dozen single-series
-    calls when the question is "what is going on right now".
+    Returns both regime verdicts (``regime`` for the US, ``korea_regime`` for
+    Korea), core policy/funding/risk levels with their observation dates,
+    derived spreads and liquidity, this week's high-impact releases, and a
+    freshness line.  Prefer this over a dozen single-series calls when the
+    question is "what is going on right now".
     """
     report = dashboard.situation()
     return {
         **report,
         "guidance": (
             "각 값에는 관측일이 붙어 있습니다. 서로 다른 주기의 계열을 같은 시점처럼 "
-            "비교하지 말고, regime은 임계값 기반 참고 분류로만 인용하세요."
+            "비교하지 마세요. 국면 분류는 둘 다 참고용입니다 — regime은 미국 입력의 "
+            "임계값 규칙, korea_regime은 한국 입력을 각자의 분포 백분위로 채점한 "
+            "결과이며, 이력이 부족한 구성요소는 투표에서 빠지고 pending에 남습니다. "
+            "둘이 갈릴 때는 하나로 합치지 말고 각각 어떤 입력이 이끌었는지 함께 "
+            "보고하세요."
         ),
     }
 
@@ -381,7 +386,13 @@ def market_yield_curve(country: str = "us") -> dict:
 
 @mcp.tool()
 def market_regime() -> dict:
-    """Classify cached conditions with a rule-based heuristic, not investment advice."""
+    """Classify cached conditions with rule-based heuristics, not investment advice.
+
+    The top level is the US reading (VIX, US IG spread, S&P 200-day average).
+    ``korea_regime`` is the separate Korean reading, scored by percentile against each
+    input's own distribution. Report both when they disagree; the disagreement
+    is evidence, not noise.
+    """
     result = analysis.market_regime(
         db.get_indicator_points("us_vix"),
         db.get_indicator_points("us_ig_spread"),
@@ -389,6 +400,7 @@ def market_regime() -> dict:
     )
     return {
         **result,
+        "korea_regime": dashboard.korea_regime(),
         "cached": True,
         "warning": "임계값 기반 참고 분류이며 현재 시장의 객관적 정답이 아닙니다.",
     }

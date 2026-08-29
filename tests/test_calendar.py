@@ -411,6 +411,135 @@ class AnalysisTests(unittest.TestCase):
         self.assertEqual(0.0, analysis.value_at_risk(rising)["var_1day_pct"])
 
 
+class KoreaRegimeTests(TemporaryDatabaseTest):
+    """The Korean classifier is percentile-based; these pin down why."""
+
+    @staticmethod
+    def _series(values: list[float]) -> list[dict]:
+        """Daily points ending today, so the freshness gate lets them through."""
+        today = kst_today()
+        return [
+            {
+                "date": (today - timedelta(days=len(values) - 1 - index)).isoformat(),
+                "value": float(value),
+            }
+            for index, value in enumerate(values)
+        ]
+
+    @staticmethod
+    def _ramp(start: float, end: float, count: int) -> list[float]:
+        return [start + (end - start) * i / (count - 1) for i in range(count)]
+
+    def _bounce_inside_a_crash(self) -> list[dict]:
+        """A long climb, a sharp break, a partial recovery — KOSPI in 2026-08."""
+        return self._series(
+            self._ramp(1000, 2000, 310) + self._ramp(2000, 4000, 140)
+            + self._ramp(4000, 2600, 30) + self._ramp(2600, 3200, 30)
+        )
+
+    def test_spread_is_scored_against_its_own_distribution_not_an_absolute_cut(self):
+        """The same 0.688%p reads as narrow or wide depending on its history.
+
+        This is the whole reason the Korean classifier is not a copy of the US
+        one: a 0.688 corporate spread is well inside the US "narrow" rule of
+        thumb, yet it sat at the 87th percentile of its own recent range.
+        """
+        wide = analysis.korea_regime(
+            None, self._series([0.5] * 250 + [0.688]),
+            self._series([0.5] * 250 + [0.5]), None,
+        )
+        narrow = analysis.korea_regime(
+            None, self._series([0.9] * 250 + [0.688]),
+            self._series([0.5] * 250 + [0.5]), None,
+        )
+        credit_of = lambda r: next(  # noqa: E731
+            c for c in r["components"] if c["key"] == "credit"
+        )
+        self.assertEqual(0.688, credit_of(wide)["value"])
+        self.assertEqual(0.688, credit_of(narrow)["value"])
+        self.assertEqual(-1, credit_of(wide)["score"])
+        self.assertEqual(1, credit_of(narrow)["score"])
+
+    def test_trend_and_drawdown_disagree_on_a_bounce_inside_a_crash(self):
+        """Above the 200-day average and deep below the 52-week high at once.
+
+        The US classifier reads only the first half of that and calls it
+        risk-on. Scoring both is what makes the state visible.
+        """
+        result = analysis.korea_regime(None, None, None, self._bounce_inside_a_crash())
+        scores = {c["key"]: c["score"] for c in result["components"]}
+        self.assertEqual(1, scores["trend"])
+        self.assertEqual(-1, scores["drawdown"])
+
+    def test_short_history_component_is_pending_not_guessed(self):
+        result = analysis.korea_regime(
+            self._series([55, 56, 57, 58, 59]), None, None,
+            self._bounce_inside_a_crash(),
+        )
+        pending = {item["key"]: item["reason"] for item in result["pending"]}
+        self.assertIn("volatility", pending)
+        self.assertIn("50", pending["volatility"])
+        self.assertIn("현재 5", pending["volatility"])
+        self.assertNotIn(
+            "volatility", {c["key"] for c in result["components"]}
+        )
+
+    def test_stale_component_is_excluded_with_a_reason(self):
+        stale = self._series([0.5] * 250 + [0.688])
+        for point in stale:  # push the whole series a fortnight into the past
+            point["date"] = (
+                date.fromisoformat(point["date"]) - timedelta(days=14)
+            ).isoformat()
+        result = analysis.korea_regime(None, stale, None, None)
+        pending = {item["key"]: item["reason"] for item in result["pending"]}
+        self.assertIn("credit", pending)
+        self.assertIn("오래", pending["credit"])
+
+    def test_declines_to_judge_below_the_minimum_component_count(self):
+        # Only the trend component can report: a verdict from one reading
+        # would be a guess wearing a verdict's clothes.
+        result = analysis.korea_regime(
+            None, None, None, self._series(self._ramp(1000, 2000, 300))
+        )
+        self.assertEqual("unknown", result["regime"])
+        self.assertIsNone(result["ratio"])
+        self.assertEqual(1, result["component_count"])
+
+    def test_ratio_holds_the_bar_as_the_component_count_moves(self):
+        """A net +2 is decisive out of four readings and is not out of five."""
+        low_spread = self._series([0.9] * 60 + [0.4])
+        kospi = self._bounce_inside_a_crash()
+        four = analysis.korea_regime(None, low_spread, low_spread, kospi)
+        self.assertEqual((4, 2), (four["component_count"], four["score"]))
+        self.assertEqual("risk_on", four["regime"])
+
+        # A fifth reading that leans neither way keeps the net score and
+        # dilutes the majority; a raw-sum rule would ignore that.
+        middling_vol = self._series(list(range(50)) + [25])
+        five = analysis.korea_regime(middling_vol, low_spread, low_spread, kospi)
+        self.assertEqual((5, 2), (five["component_count"], five["score"]))
+        self.assertEqual("neutral", five["regime"])
+
+    def test_shared_spread_alignment_feeds_the_classifier(self):
+        """The classifier must read the same spread the risk panel shows."""
+        db.init_db()
+        db.save_indicator_points(
+            "kr_corp_bond_3y", [{"date": "2026-08-28", "value": 4.476}], "ecos"
+        )
+        db.save_indicator_points(
+            "kr_treasury_3y", [{"date": "2026-08-28", "value": 3.788}], "ecos"
+        )
+        series = market_metrics.aligned_spread_series(
+            "kr_corp_bond_3y", "kr_treasury_3y"
+        )
+        self.assertEqual(0.688, series[-1]["value"])
+        self.assertEqual(
+            series[-1], market_metrics._aligned_difference(
+                "kr_corp_bond_3y", "kr_treasury_3y"
+            ),
+        )
+
+
 class MarketMetricsTests(TemporaryDatabaseTest):
     def setUp(self):
         super().setUp()

@@ -253,6 +253,21 @@ def freshness() -> dict:
     }
 
 
+def korea_regime() -> dict:
+    """The same verdict for the market this project actually watches.
+
+    Kept beside the US one rather than replacing it: when the two disagree —
+    as they do whenever Korea decouples — the disagreement is the finding, and
+    a single blended verdict would hide it.
+    """
+    return analysis.korea_regime(
+        db.get_indicator_points("kr_vkospi"),
+        market_metrics.aligned_spread_series("kr_corp_bond_3y", "kr_treasury_3y"),
+        market_metrics.aligned_spread_series("kr_cp_91d", "kr_cd_91d"),
+        db.get_index_points("^KS11"),
+    )
+
+
 def situation() -> dict:
     """Everything the front page shows, resolved from cache in one pass."""
     regime = analysis.market_regime(
@@ -262,6 +277,7 @@ def situation() -> dict:
     )
     return {
         "regime": regime,
+        "korea_regime": korea_regime(),
         "sentiment": sentiment.gauge(),
         "groups": headline_tiles(),
         "indices": headline_indices(),

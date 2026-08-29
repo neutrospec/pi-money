@@ -48,6 +48,11 @@
   .up { color:#f85149; } .down { color:#3fb950; } .flat { color:#8b949e; }
   .pos { color:#58a6ff; } .neg { color:#f0883e; }
   .sig-ok { color:#3fb950; } .sig-warn { color:#d29922; } .sig-danger { color:#f85149; }
+  .sig-muted { color:#6e7681; }
+  /* Two regime verdicts sit side by side so a disagreement is visible at
+     a glance; they stack on narrow screens rather than shrinking. */
+  .regime-pair { display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr));
+                 gap:16px; margin-bottom:20px; }
   .num { text-align:right; font-variant-numeric:tabular-nums; }
   /* Wide content scrolls inside its own box; the page itself never does. */
   .scroll { overflow-x:auto; }

@@ -44,7 +44,7 @@ args: --directory /Users/nobocop/projects/money run python -m app.mcp_server
 | `market_index_analysis` | 지수 추세·변동성·최대 낙폭 |
 | `market_technical` | RSI·MACD·볼린저·추세 기술 통계 |
 | `market_risk` | 샤프·과거 VaR/ES·최대 낙폭 |
-| `market_regime` | VIX·신용·S&P 기반 규칙형 상태 분류 |
+| `market_regime` | 한·미 두 규칙형 국면 분류. 미국은 VIX·신용·S&P 임계값, 한국은 VKOSPI·회사채 스프레드·CP−CD·코스피 추세·낙폭의 자체 분포 백분위 |
 | `market_derived_metrics` | 날짜 정렬한 신용·실질금리·유동성·물가·상대강도 파생지표 |
 | `market_breadth` | 캐시된 KRX 전 종목 표의 상승·하락·쏠림·20일 시장폭 |
 
