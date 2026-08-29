@@ -15,6 +15,7 @@
 | [`plan/README.md`](plan/README.md) | M0~M7 계획과 실제 상태 |
 | [`plan/historical-recovery.md`](plan/historical-recovery.md) | 1차 최신성·2차 과거 완전성 방어와 유한 종료 조건 |
 | [`plan/data-coverage.md`](plan/data-coverage.md) | 더 풍부한 시장 분석을 위한 입력 데이터 우선순위·자원 상한 |
+| [`plan/decision-support.md`](plan/decision-support.md) | 수집에서 판단 보조로 — 정규화·연결·판단 프레이밍과 학습 구조 설계 |
 | [`tasks/`](tasks/) | 마일스톤별 검증 체크리스트, M6 분석 입력·브리핑 진행 상태 |
 | [`roadmap/README.md`](roadmap/README.md) | 다음 단계와 의도적으로 남긴 범위 |
 | [`analysis-methods.md`](analysis-methods.md) | 분석 방법과 해석 제한 |
