@@ -94,10 +94,16 @@ class Collector:
                         errors["coverage"] = "coverage audit still failing after repair"
                 except Exception as exc:
                     errors["coverage_audit"] = f"{type(exc).__name__}: {exc}"
-            status = (
-                "success" if not errors and not pending and ok == total
-                else ("partial" if ok or pending else "error")
-            )
+            # A bounded batch that drained its slice without failing has
+            # succeeded; the queue behind it is progress still owed, not a
+            # fault. Reporting that as "partial" made the backlog its own
+            # cause — the recovery delay applied the provider-error backoff,
+            # so the queue drained six times slower precisely because it was
+            # not empty, and last_success_at never advanced.
+            if not errors and ok == total:
+                status = "backlog" if pending else "success"
+            else:
+                status = "partial" if ok or pending else "error"
             details = json.dumps({
                 "trigger": trigger,
                 "errors": errors,
@@ -115,14 +121,13 @@ class Collector:
                 total=total,
                 duration_ms=duration_ms,
                 error=(
-                    None if not errors and not pending else
                     "; ".join(filter(None, (
-                        f"{len(errors)} item(s) failed" if errors else "",
+                        f"{len(errors)} item(s) failed",
                         f"{pending} item(s) pending" if pending else "",
-                    )))
+                    ))) if errors else None
                 ),
                 details=details,
-                success=status == "success",
+                success=status in db.HEALTHY_RUN_STATUSES,
             )
             return {
                 "name": self.name,
@@ -245,9 +250,18 @@ class Scheduler:
                 delay = self._recovery_delay(collector)
                 age = current - collector.last_run
                 if collector.last_run and age < delay:
+                    # Separate "collected too recently to collect again" from
+                    # "held back because it failed". Both defer a run, but only
+                    # the second is an unresolved action; without the
+                    # distinction a 5-minute collector puts the whole system
+                    # in a permanent unresolved state between its own runs.
+                    held_back = (collector.state or {}).get("status") in {
+                        "partial", "error",
+                    }
                     report.append({
                         "name": collector.name,
                         "action": "backoff",
+                        "reason": "provider_error" if held_back else "cadence",
                         "retry_in_seconds": max(0, int(delay - age)),
                     })
                     continue

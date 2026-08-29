@@ -1,0 +1,158 @@
+{% extends "base.html" %}
+{% block title %}금리 — Money Market Intelligence{% endblock %}
+{% block content %}
+  <div class="pagehead">
+    <h1>📉 금리 · 수익률 곡선</h1>
+    <div class="sub">국채 곡선과 단기자금시장 · 곡선은 모든 만기가 함께 관측된 날짜로 정렬합니다</div>
+  </div>
+
+  <div class="card">
+    <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px;">
+      <div class="card-title" style="margin:0;">국채 수익률 곡선</div>
+      <div style="display:flex;gap:6px;margin-left:auto;" id="curveTabs"></div>
+    </div>
+    <div class="card-sub" id="curveMeta">불러오는 중...</div>
+    <div id="curveChart" style="height:320px;"></div>
+    <div class="scroll"><table id="curveTable"></table></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">단기자금시장</div>
+    <div class="card-sub">정책금리와 실제 조달금리의 관계 · 괴리가 벌어지면 자금 수급 압력입니다</div>
+    <div class="tiles" id="shortEnd"><div class="m">불러오는 중...</div></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">스프레드</div>
+    <div class="card-sub">신용·기간 프리미엄. 확대는 위험 회피, 축소는 위험 선호 신호로 읽습니다</div>
+    <div class="tiles" id="spreads"><div class="m">불러오는 중...</div></div>
+  </div>
+
+<script>
+const CURVES = [['kr','한국 국고채'], ['us','미국 국채']];
+let current = 'kr';
+
+function esc(s) { return String(s ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+function pct(v, d = 3) { return v == null ? '-' : Number(v).toFixed(d) + '%'; }
+
+// Curve values are levels, not price moves, so they use the neutral analysis
+// axis. Red would read as "the market fell", which a yield does not mean.
+function signClass(v) { return v == null ? 'flat' : (v > 0 ? 'pos' : (v < 0 ? 'neg' : 'flat')); }
+
+function tile(label, value, note) {
+  return '<div class="tile"><div class="k">' + esc(label) + '</div>'
+    + '<div class="v">' + value + '</div>'
+    + '<div class="m" style="line-height:1.4;">' + esc(note) + '</div></div>';
+}
+
+const chart = echarts.init(document.getElementById('curveChart'));
+window.addEventListener('resize', () => chart.resize());
+
+function renderCurve(d) {
+  const labels = d.points.map(p => p.label);
+  const now = d.points.map(p => p.value);
+  const before = d.comparison.length ? d.comparison.map(p => p.value) : null;
+  chart.setOption({
+    backgroundColor: 'transparent',
+    tooltip: { trigger: 'axis', valueFormatter: v => Number(v).toFixed(3) + '%' },
+    legend: { data: before ? ['현재', d.compared_to] : ['현재'], textStyle: { color: '#8b949e' }, top: 0 },
+    grid: { left: 56, right: 24, top: 34, bottom: 30 },
+    xAxis: { type: 'category', data: labels, axisLabel: { color: '#8b949e' } },
+    yAxis: { type: 'value', scale: true, axisLabel: { color: '#8b949e', formatter: v => v.toFixed(2) } },
+    series: [
+      { name: '현재', type: 'line', data: now, smooth: true, symbolSize: 7,
+        lineStyle: { width: 3, color: '#58a6ff' }, itemStyle: { color: '#58a6ff' } },
+      ...(before ? [{ name: d.compared_to, type: 'line', data: before, smooth: true,
+        symbolSize: 5, lineStyle: { width: 2, type: 'dashed', color: '#6e7681' },
+        itemStyle: { color: '#6e7681' } }] : [])
+    ]
+  }, true);
+
+  const prior = Object.fromEntries((d.comparison || []).map(p => [p.key, p.value]));
+  let html = '<thead><tr><th>만기</th><th class="num">현재</th>'
+    + (d.compared_to ? '<th class="num">' + esc(d.compared_to) + '</th><th class="num">변화</th>' : '')
+    + '</tr></thead><tbody>';
+  d.points.forEach(p => {
+    const was = prior[p.key];
+    const chg = was == null ? null : p.value - was;
+    html += '<tr><td>' + esc(p.label) + '</td><td class="num">' + pct(p.value) + '</td>'
+      + (d.compared_to ? '<td class="num" style="color:#8b949e;">' + pct(was) + '</td>'
+        + '<td class="num ' + signClass(chg) + '">' + (chg == null ? '-' : (chg > 0 ? '+' : '') + chg.toFixed(3)) + '</td>' : '')
+      + '</tr>';
+  });
+  document.getElementById('curveTable').innerHTML = html + '</tbody>';
+
+  const inverted = d.inverted_segments || [];
+  document.getElementById('curveMeta').innerHTML =
+    '관측일 ' + esc(d.as_of) + (d.compared_to ? ' · 비교 ' + esc(d.compared_to) : '')
+    + ' · 출처 ' + esc(d.source)
+    + (inverted.length
+      ? ' · <span class="sig-warn">역전 구간 ' + inverted.map(s => esc(s[0]) + '→' + esc(s[1])).join(', ') + '</span>'
+      : ' · <span class="sig-ok">역전 없음</span>')
+    + '<div style="margin-top:4px;">' + esc(d.warning) + '</div>';
+}
+
+function loadCurve(country) {
+  current = country;
+  document.getElementById('curveTabs').innerHTML = CURVES.map(([id, name]) =>
+    '<button data-c="' + id + '" style="background:' + (id === country ? '#1f6feb' : '#21262d')
+    + ';color:#e6edf3;border:none;padding:5px 12px;border-radius:6px;cursor:pointer;font-size:12px;">'
+    + esc(name) + '</button>').join('');
+  document.querySelectorAll('#curveTabs button').forEach(b =>
+    b.onclick = () => loadCurve(b.dataset.c));
+  fetch('/api/analysis/curve?country=' + country)
+    .then(async r => { const d = await r.json(); if (!r.ok) throw new Error(d.detail || '곡선 계산 실패'); return d; })
+    .then(renderCurve)
+    .catch(e => { document.getElementById('curveMeta').textContent = e.message; });
+}
+
+// Short-end funding: the policy rate against what banks and firms actually pay.
+const SHORT_END = [
+  ['kr_base_rate', '한국 기준금리', '금통위 결정. 다른 단기금리의 기준선입니다.'],
+  ['kr_kofr', 'KOFR', '국채·통안증권 담보 익일물 실거래 금리. 무위험 조달비용입니다.'],
+  ['kr_call', '콜금리', '금융기관 간 무담보 익일물.'],
+  ['kr_cd_91d', 'CD 91일', '은행 양도성예금증서. 변동금리 대출의 기준입니다.'],
+  ['kr_cp_91d', 'CP 91일', '기업어음. CD와의 차이가 기업 조달 프리미엄입니다.'],
+  ['kr_msb_91d', '통안증권 91일', '한국은행 발행. 단기 국공채 기준입니다.'],
+];
+
+Promise.all(SHORT_END.map(([key]) =>
+  fetch('/api/indicator/' + key + '?limit=2').then(r => r.ok ? r.json() : null).catch(() => null)
+)).then(rows => {
+  const html = rows.map((d, i) => {
+    const [, label, note] = SHORT_END[i];
+    if (!d || !d.points.length) return tile(label, '-', '수집 대기');
+    const last = d.points[d.points.length - 1];
+    const prev = d.points.length > 1 ? d.points[d.points.length - 2] : null;
+    const chg = prev ? last.value - prev.value : null;
+    return tile(label,
+      pct(last.value) + (chg ? ' <span class="' + signClass(chg) + '" style="font-size:12px;">'
+        + (chg > 0 ? '+' : '') + chg.toFixed(3) + '</span>' : ''),
+      last.date + ' · ' + note);
+  }).join('');
+  document.getElementById('shortEnd').innerHTML = html;
+});
+
+fetch('/api/analysis/derived').then(r => r.json()).then(d => {
+  const m = d.macro || {};
+  const items = [
+    ['kr_credit_spread_3y', '신용 스프레드 3년', '회사채 AA− − 국고채 3년'],
+    ['kr_credit_spread_bbb', '신용 스프레드 BBB−', '저신용 구간의 조달 여건'],
+    ['kr_cp_cd_spread', 'CP − CD 91일', '단기 자금시장 긴장도'],
+    ['kr_kofr_base_gap', 'KOFR − 기준금리', '무위험 조달과 정책금리의 괴리'],
+    ['kr_curve_10y_3y', '국고채 10년 − 3년', '기간 프리미엄'],
+    ['kr_curve_3y_1y', '국고채 3년 − 1년', '단기 구간 기울기'],
+  ];
+  document.getElementById('spreads').innerHTML = items.map(([key, label, note]) => {
+    const v = m[key];
+    if (!v) return tile(label, '-', '입력 부족');
+    return tile(label,
+      '<span class="' + signClass(v.value) + '">' + (v.value > 0 ? '+' : '') + v.value.toFixed(3) + '</span>'
+      + '<span style="font-size:11px;font-weight:400;color:#8b949e;">%p</span>',
+      v.date + ' · ' + note);
+  }).join('');
+});
+
+loadCurve('kr');
+</script>
+{% endblock %}

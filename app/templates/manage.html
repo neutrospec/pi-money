@@ -53,11 +53,13 @@ function statusOf(status){
   if(status==='stale') return '<span style="color:#d29922">지연</span>';
   return '<span style="color:#f85149">'+(status==='invalid'?'날짜 오류':'누락')+'</span>';
 }
+// 남은 큐가 있어도 실패 없이 자기 몫을 끝낸 실행은 정상으로 읽는다.
+const HEALTHY=['success','backlog'];
 function render() {
   fetch('/api/scheduler').then(r=>r.json()).then(sd=>{
     const rec=sd.reconciliation||{};
     const report=rec.report||[];
-    const pending=report.filter(x=>['backoff','audit_error','busy','no_audit'].includes(x.action)||(x.action==='repaired'&&x.status!=='success'));
+    const pending=report.filter(x=>(x.action==='backoff'&&x.reason!=='cadence')||['audit_error','busy','no_audit'].includes(x.action)||(x.action==='repaired'&&!HEALTHY.includes(x.status)));
     const repair=document.getElementById('stRepair');
     repair.textContent=pending.length?pending.length+'건 대기':'정상';
     repair.style.color=pending.length?'#d29922':'#3fb950';
@@ -104,7 +106,7 @@ function render() {
     let stale=0; for(const k in d.indicators) if(d.indicators[k].status!=='fresh') stale++;
     document.getElementById('stStale').textContent=stale;
     document.getElementById('stStale').style.color=stale?'#d29922':'#3fb950';
-    let lh=''; d.logs.forEach(l=>{ const ok=l.status==='success'; lh+='<tr title="'+esc(l.details||'')+'"><td>'+esc(l.ts)+'</td><td>'+esc(l.category)+'</td><td style="color:'+(ok?'#3fb950':'#f85149')+'">'+l.ok+'/'+l.total+' ('+esc(l.status||'success')+')</td><td>'+(l.duration_ms/1000).toFixed(1)+'s</td></tr>'; });
+    let lh=''; d.logs.forEach(l=>{ const ok=HEALTHY.includes(l.status||'success'); lh+='<tr title="'+esc(l.details||'')+'"><td>'+esc(l.ts)+'</td><td>'+esc(l.category)+'</td><td style="color:'+(ok?'#3fb950':'#f85149')+'">'+l.ok+'/'+l.total+' ('+esc(l.status||'success')+')</td><td>'+(l.duration_ms/1000).toFixed(1)+'s</td></tr>'; });
     document.getElementById('logBody').innerHTML=lh||'<tr><td colspan="4">로그 없음</td></tr>';
     const rank={missing:0,invalid:1,stale:2,fresh:3};
     let ih=''; Object.entries(d.indicators).sort((a,b)=>{

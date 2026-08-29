@@ -7,8 +7,19 @@
     <div style="color:#8b949e;font-size:12px;margin-top:6px;">주황 점선 = 향후 예정 발표일 · 관측점 표시는 발표 주기가 성긴 계열에만 나타납니다</div>
   </div>
 
+  <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:14px;">
+    <input id="search" placeholder="지표 검색 — 국고채, CPI, VIX, KOFR ..." style="flex:1;min-width:220px;
+      background:#0d1117;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:8px 10px;font-size:14px;">
+    <label style="color:#8b949e;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+      <input type="checkbox" id="coreOnly"> 핵심만
+    </label>
+  </div>
   <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px;" id="catTabs"></div>
   <div style="color:#8b949e;font-size:12px;margin-bottom:12px;" id="catDesc"></div>
+  {# The catalog holds a core/supporting priority that the old dropdown threw
+     away. Showing it as a list puts the series a person checks first at the
+     top instead of alphabetically buried among 168 entries. #}
+  <div class="scroll" id="indList" style="max-height:230px;margin-bottom:16px;"></div>
   <div style="display:flex;gap:10px;align-items:center;margin-bottom:16px;flex-wrap:wrap;">
     <select id="indSelect" style="background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:8px;padding:8px 12px;font-size:14px;min-width:260px;"></select>
     <span style="color:#8b949e;font-size:12px;" id="count"></span>
@@ -30,22 +41,61 @@ function loadCatDescs() {
 function showCatDesc(cat) {
   document.getElementById('catDesc').textContent = catDescMap[cat] || '';
 }
+let currentCat = null;
+
+function esc(s) { return String(s ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+
+function visibleItems() {
+  const q = document.getElementById('search').value.trim().toLowerCase();
+  const coreOnly = document.getElementById('coreOnly').checked;
+  return allItems
+    .filter(i => !coreOnly || i.priority === 'core')
+    .filter(i => !q || (i.label + ' ' + i.key + ' ' + (i.desc || '')).toLowerCase().includes(q))
+    // Core first, then by how recently the series was observed: a stale
+    // series is rarely what someone opened this page to look at.
+    .sort((a, b) => (a.priority === b.priority ? 0 : a.priority === 'core' ? -1 : 1));
+}
+
+function paintList() {
+  const items = visibleItems();
+  const sel = document.getElementById('indSelect');
+  sel.innerHTML = '';
+  items.forEach(i => {
+    const o = document.createElement('option');
+    o.value = i.key; o.textContent = i.label + ' (' + i.unit + ')'; o.title = i.desc || '';
+    sel.appendChild(o);
+  });
+  document.getElementById('indList').innerHTML = items.length
+    ? '<table><thead><tr><th>지표</th><th>주기</th><th>최신 관측</th><th>출처</th></tr></thead><tbody>'
+      + items.map(i =>
+        '<tr style="cursor:pointer;" data-k="' + esc(i.key) + '">'
+        + '<td>' + (i.priority === 'core' ? '<span class="pos" style="font-size:10px;">핵심</span> ' : '')
+        + esc(i.label) + (i.proxy ? ' <span class="neg" style="font-size:10px;">proxy</span>' : '')
+        + '<div class="m">' + esc(i.key) + '</div></td>'
+        + '<td style="color:#8b949e;">' + esc(i.frequency) + '</td>'
+        + '<td style="color:#8b949e;">' + esc(i.latest_date || '-') + '</td>'
+        + '<td style="color:#8b949e;">' + esc(i.source) + '</td></tr>').join('')
+      + '</tbody></table>'
+    : '<div class="m">조건에 맞는 지표가 없습니다.</div>';
+  document.querySelectorAll('#indList tr[data-k]').forEach(tr =>
+    tr.onclick = () => { document.getElementById('indSelect').value = tr.dataset.k; render(tr.dataset.k); });
+  document.getElementById('count').textContent =
+    items.length + ' / ' + allItems.length + '개';
+  if (items.length) render(items[0].key);
+}
+
 function loadCategory(cat) {
+  currentCat = cat;
   fetch('/api/indicators?category=' + encodeURIComponent(cat)).then(r => r.json()).then(data => {
     allItems = data.items;
-    const sel = document.getElementById('indSelect');
-    sel.innerHTML = '';
-    allItems.forEach(item => {
-      const opt = document.createElement('option');
-      opt.value = item.key; opt.textContent = item.label + ' (' + item.unit + ')';
-      opt.title = item.desc;
-      sel.appendChild(opt);
-    });
-    document.getElementById('count').textContent = data.count + '개 지표';
     showCatDesc(cat);
-    if (allItems.length) render(allItems[0].key);
+    paintList();
   });
 }
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('search').addEventListener('input', paintList);
+  document.getElementById('coreOnly').addEventListener('change', paintList);
+});
 function render(key) {
   fetch('/api/indicator/' + key).then(async r => {
     const data = await r.json();

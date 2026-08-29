@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+{% block title %}분석 — Money Market Intelligence{% endblock %}
+{% block content %}
+  <div class="pagehead">
+    <h1>🔬 지수 분석</h1>
+    <div class="sub">추세 · 변동성 · 위험 · 기술 지표 — 모두 표본 기간에 민감한 기술 통계입니다</div>
+  </div>
+
+  <div class="card">
+    <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
+      <select id="symbol" style="background:#0d1117;border:1px solid #30363d;color:#e6edf3;
+        border-radius:6px;padding:8px 10px;font-size:14px;min-width:200px;"></select>
+      <select id="years" style="background:#0d1117;border:1px solid #30363d;color:#e6edf3;
+        border-radius:6px;padding:8px 10px;font-size:13px;">
+        <option value="1">1년</option><option value="2" selected>2년</option>
+        <option value="5">5년</option><option value="10">10년</option>
+      </select>
+      <div class="m" id="meta" style="margin-left:auto;"></div>
+    </div>
+  </div>
+
+  <div class="tiles" id="summary"><div class="m">불러오는 중...</div></div>
+
+  <div class="card">
+    <div class="card-title">위험</div>
+    <div class="card-sub">과거 수익률 분포에서 계산합니다. VaR는 최대 손실이 아니라 분위수입니다</div>
+    <div class="tiles" id="risk"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">기술 지표</div>
+    <div class="card-sub">후행적 기술 통계이며 매수·매도 신호가 아닙니다</div>
+    <div class="tiles" id="technical"></div>
+  </div>
+  <div id="warn" class="m" style="line-height:1.6;"></div>
+
+<script>
+function esc(s) { return String(s ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+function n(v, d = 2, suffix = '') { return v == null ? '-' : Number(v).toFixed(d) + suffix; }
+// These are signed statistics, not price moves: neutral axis.
+function sign(v) { return v == null ? 'flat' : (v > 0 ? 'pos' : (v < 0 ? 'neg' : 'flat')); }
+function tile(label, value, note, cls) {
+  return '<div class="tile"><div class="k">' + esc(label) + '</div>'
+    + '<div class="v ' + (cls || '') + '">' + value + '</div>'
+    + '<div class="m" style="line-height:1.4;">' + esc(note) + '</div></div>';
+}
+
+let indices = [];
+fetch('/api/indices').then(r => r.json()).then(d => {
+  indices = d.indices;
+  const select = document.getElementById('symbol');
+  d.indices.forEach(i => {
+    const o = document.createElement('option');
+    o.value = i.symbol; o.textContent = i.region + ' · ' + i.name;
+    select.appendChild(o);
+  });
+  select.value = '^KS11';
+  load();
+});
+
+function load() {
+  const symbol = document.getElementById('symbol').value;
+  const years = document.getElementById('years').value;
+  const query = '?symbol=' + encodeURIComponent(symbol) + '&years=' + years;
+  document.getElementById('summary').innerHTML = '<div class="m">불러오는 중...</div>';
+
+  Promise.all([
+    fetch('/api/analysis/trend' + query).then(r => r.ok ? r.json() : null).catch(() => null),
+    fetch('/api/analysis/risk' + query).then(r => r.ok ? r.json() : null).catch(() => null),
+    fetch('/api/analysis/technical' + query).then(r => r.ok ? r.json() : null).catch(() => null),
+  ]).then(([trend, risk, tech]) => {
+    if (!trend) {
+      document.getElementById('summary').innerHTML =
+        '<div class="m">이 지수는 요청한 기간의 관측치가 부족합니다.</div>';
+      document.getElementById('risk').innerHTML = '';
+      document.getElementById('technical').innerHTML = '';
+      return;
+    }
+    document.getElementById('meta').textContent =
+      '관측일 ' + (trend.as_of || '-') + ' · 출처 ' + (trend.source || '-') + ' · 캐시';
+
+    const vol = trend.volatility || {};
+    const dd = trend.max_drawdown || {};
+    const signals = trend.signals || [];
+    const above = signals.filter(s => s.above).length;
+    document.getElementById('summary').innerHTML =
+      tile('현재 지수', n(trend.current, 2), (trend.date || '-') + ' 종가')
+      + tile('이동평균 위', above + ' / ' + signals.length,
+        signals.map(s => s.window + '일 ' + (s.above ? '위' : '아래')).join(' · '),
+        above === signals.length ? 'pos' : (above === 0 ? 'neg' : ''))
+      + tile('실현 변동성', n(vol.recent_vol_annualized, 1, '%'),
+        '최근 ' + (vol.window ?? '-') + '일 연율화 · 전체 기간 ' + n(vol.full_vol_annualized, 1, '%'),
+        vol.elevated ? 'neg' : '')
+      + tile('최대 낙폭', n(dd.max_drawdown_pct, 1, '%'),
+        (dd.peak_date || '-') + ' → ' + (dd.trough_date || '-'), 'neg');
+
+    if (risk) {
+      const v = risk.var || {}, sh = risk.sharpe || {};
+      document.getElementById('risk').innerHTML =
+        tile('샤프 비율', n(sh.sharpe_annualized, 2),
+          '연수익 ' + n(sh.annual_return_pct, 1, '%') + ' · 연변동성 ' + n(sh.annual_vol_pct, 1, '%'),
+          sign(sh.sharpe_annualized))
+        + tile('VaR 95% (1일)', n(v.var_1day_pct, 2, '%'),
+          '지수 ' + n(v.var_1day_index_points, 0) + 'p 상당 · 손실 분위수이지 최대 손실이 아님', 'neg')
+        + tile('기대손실 95%', n(v.expected_shortfall_1day_pct, 2, '%'),
+          'VaR를 넘었을 때의 평균 손실 · ' + esc(v.method || ''), 'neg')
+        + tile('최대 낙폭', n((risk.max_drawdown || {}).max_drawdown_pct, 1, '%'),
+          '고점 대비 최대 하락', 'neg');
+    }
+    if (tech) {
+      const rsi = tech.rsi, macd = tech.macd || {}, bb = tech.bollinger || {};
+      const rsiNote = rsi == null ? '-'
+        : (rsi > 70 ? '과매수 구간 (>70)' : rsi < 30 ? '과매도 구간 (<30)' : '중립 구간');
+      const band = bb.touching_upper ? '상단 접촉' : bb.touching_lower ? '하단 접촉' : '밴드 내';
+      document.getElementById('technical').innerHTML =
+        tile('RSI(14)', n(rsi, 1), rsiNote)
+        + tile('MACD', n(macd.macd, 1),
+          '시그널 ' + n(macd.signal, 1) + ' · 히스토그램 ' + n(macd.histogram, 1),
+          sign(macd.histogram))
+        + tile('볼린저 %B', bb.pct_b == null ? '-' : n(bb.pct_b * 100, 0, '%'),
+          band + ' · 상단 ' + n(bb.upper, 0) + ' / 하단 ' + n(bb.lower, 0))
+        + tile('이동평균 이격', signals.length ? n(signals[0].pct_from_ma, 1, '%') : '-',
+          signals.map(s => s.window + '일 ' + (s.pct_from_ma > 0 ? '+' : '') + n(s.pct_from_ma, 1) + '%').join(' · '));
+      document.getElementById('warn').textContent = tech.warning || '';
+    }
+  });
+}
+document.getElementById('symbol').onchange = load;
+document.getElementById('years').onchange = load;
+</script>
+{% endblock %}

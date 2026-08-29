@@ -45,19 +45,30 @@ def _growth_summary(key: str, annual_periods: int = 12) -> dict | None:
     return result
 
 
-def _aligned_difference(left_key: str, right_key: str) -> dict | None:
+def aligned_spread_series(left_key: str, right_key: str) -> list[dict]:
+    """Every date both series observe, as ``left - right``.
+
+    The regime classifier scores a spread against its own distribution, so it
+    needs the whole aligned history rather than the latest point. Deriving
+    both from one function keeps a single definition of what "the spread on a
+    date" means; two nearly-identical alignments would drift apart.
+    """
     left = {point["date"]: point["value"] for point in db.get_indicator_points(left_key)}
     right = {point["date"]: point["value"] for point in db.get_indicator_points(right_key)}
-    common = sorted(left.keys() & right.keys())
-    if not common:
-        return None
-    day = common[-1]
-    return {
-        "date": day,
-        "value": round(left[day] - right[day], 3),
-        "left": {"key": left_key, "value": left[day]},
-        "right": {"key": right_key, "value": right[day]},
-    }
+    return [
+        {
+            "date": day,
+            "value": round(left[day] - right[day], 3),
+            "left": {"key": left_key, "value": left[day]},
+            "right": {"key": right_key, "value": right[day]},
+        }
+        for day in sorted(left.keys() & right.keys())
+    ]
+
+
+def _aligned_difference(left_key: str, right_key: str) -> dict | None:
+    series = aligned_spread_series(left_key, right_key)
+    return series[-1] if series else None
 
 
 def _aligned_levels(keys: list[str]) -> tuple[str, dict[str, dict]] | None:

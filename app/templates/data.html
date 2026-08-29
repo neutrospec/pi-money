@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% block title %}데이터 품질 — Money Market Intelligence{% endblock %}
+{% block content %}
+  <div class="pagehead">
+    <h1>🧪 데이터 품질</h1>
+    <div class="sub">무엇이 빠졌고 그 결측을 수집기가 스스로 메울 수 있는지 · 분석의 신뢰 근거</div>
+  </div>
+
+  <div class="card" id="verdictCard">
+    <div class="card-title">종합</div>
+    <div class="tiles" id="verdict"><div class="m">불러오는 중...</div></div>
+    <div class="m" id="method" style="margin-top:10px;line-height:1.6;"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">결측 등급</div>
+    <div class="card-sub">
+      <span class="sig-danger">confirmed</span>는 공급자에 있는데 우리가 없는 것 —
+      수집기가 보상합니다. <span class="sig-warn">candidate</span>는 주기상 기대되지만
+      애초에 미발표일 수 있습니다. <span class="flat">unverifiable</span>은 공급자
+      세션 목록을 아직 확보하지 못한 거래일 계열입니다.
+    </div>
+    <div id="gaps"><div class="m">불러오는 중...</div></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">공급자 정체</div>
+    <div class="card-sub">허용치 안이라 <code>fresh</code>지만 정상 발표 주기를 넘긴 계열입니다. 수집 실패가 아니라 공급자가 멈춘 것입니다</div>
+    <div class="scroll" id="stalled"><div class="m">불러오는 중...</div></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">지수 이력</div>
+    <div class="card-sub">공급자가 정산한 마지막 세션과 우리가 보유한 마지막 관측일을 대조합니다</div>
+    <div class="scroll" id="indices"><div class="m">불러오는 중...</div></div>
+  </div>
+
+<script>
+function esc(s) { return String(s ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+function tile(label, value, note, cls) {
+  return '<div class="tile"><div class="k">' + esc(label) + '</div>'
+    + '<div class="v ' + (cls || '') + '">' + value + '</div>'
+    + '<div class="m" style="line-height:1.4;">' + esc(note) + '</div></div>';
+}
+
+fetch('/api/coverage').then(r => r.json()).then(d => {
+  const ind = d.indicators || {}, idx = d.indices || {}, tail = ind.tail || {};
+  const ok = d.status === 'ok';
+  document.getElementById('verdictCard').style.borderColor = ok ? '#21262d' : '#d29922';
+  document.getElementById('verdict').innerHTML =
+    tile('판정', ok ? '완전' : '미해소 ' + d.unresolved,
+      ok ? '알려진 결측이 모두 해소됐습니다' : '아래 목록을 확인하세요',
+      ok ? 'sig-ok' : 'sig-warn')
+    + tile('핵심 계열', d.core.ready + ' / ' + d.core.total,
+      '광범위 분석에 먼저 쓰이는 계열 · ' + d.core_ready_pct + '%',
+      d.core.ready === d.core.total ? 'sig-ok' : 'sig-warn')
+    + tile('지표', ind.total, '최신 ' + (tail.fresh || 0)
+      + ' · 지연 ' + (tail.stale || 0) + ' · 누락 ' + (tail.missing || 0))
+    + tile('지수', idx.total, '공급자 세션과 일치 ' + ((idx.tail || {}).current || 0)
+      + ' · 미반영 ' + ((idx.tail || {}).behind_provider || 0),
+      (idx.tail || {}).behind_provider ? 'sig-warn' : 'sig-ok');
+  document.getElementById('method').textContent = d.method || '';
+
+  const a = d.attention || {};
+  const groups = [
+    ['confirmed 결측 (수집 실패)', a.indicator_gaps, 'sig-danger'],
+    ['candidate 결측 (미발표 가능)', a.indicator_candidates, 'sig-warn'],
+    ['지수 confirmed 결측', a.index_gaps, 'sig-danger'],
+  ];
+  let html = '';
+  groups.forEach(([title, rows, cls]) => {
+    html += '<div class="grouphead">' + esc(title) + ' — ' + (rows ? rows.length : 0) + '건</div>';
+    if (!rows || !rows.length) { html += '<div class="m">없음</div>'; return; }
+    html += '<div class="scroll"><table><thead><tr><th>계열</th><th class="num">결측</th><th>예시</th></tr></thead><tbody>';
+    rows.forEach(r => {
+      html += '<tr><td>' + esc(r.key || r.symbol) + '</td>'
+        + '<td class="num ' + cls + '">' + r.missing + '</td>'
+        + '<td style="color:#8b949e;font-size:12px;">' + esc((r.sample || []).join(', ')) + '</td></tr>';
+    });
+    html += '</tbody></table></div>';
+  });
+  const behind = a.indices_behind_provider || [];
+  html += '<div class="grouphead">공급자 대비 미반영 지수 — ' + behind.length + '건</div>';
+  html += behind.length
+    ? '<div class="scroll"><table><thead><tr><th>지수</th><th>보유</th><th>공급자</th></tr></thead><tbody>'
+      + behind.map(r => '<tr><td>' + esc(r.symbol) + '</td><td>' + esc(r.local)
+        + '</td><td class="sig-warn">' + esc(r.provider) + '</td></tr>').join('')
+      + '</tbody></table></div>'
+    : '<div class="m">없음</div>';
+  document.getElementById('gaps').innerHTML = html;
+
+  const stalled = a.provider_stalled || [];
+  document.getElementById('stalled').innerHTML = stalled.length
+    ? '<table><thead><tr><th>계열</th><th>최신 관측</th><th class="num">경과</th>'
+      + '<th class="num">정상 주기</th><th class="num">허용치</th></tr></thead><tbody>'
+      + stalled.map(r => '<tr><td>' + esc(r.key) + '</td><td>' + esc(r.latest) + '</td>'
+        + '<td class="num sig-warn">' + r.age_days + '일</td>'
+        + '<td class="num" style="color:#8b949e;">' + r.normal_age_days + '일</td>'
+        + '<td class="num" style="color:#8b949e;">' + r.allowance + '일</td></tr>').join('')
+      + '</tbody></table>'
+    : '<div class="m">없음</div>';
+});
+
+fetch('/api/coverage?detail=indices').then(r => r.json()).then(d => {
+  let html = '<table><thead><tr><th>지수</th><th>보유 최신</th><th>공급자 정산</th>'
+    + '<th class="num">관측</th><th>상태</th></tr></thead><tbody>';
+  d.indices.forEach(i => {
+    const ok = i.tail === 'current';
+    html += '<tr><td>' + esc(i.name) + '<div class="m">' + esc(i.symbol) + '</div></td>'
+      + '<td>' + esc(i.latest_date || '-') + '</td>'
+      + '<td style="color:#8b949e;">' + esc(i.provider_session || '-') + '</td>'
+      + '<td class="num">' + i.observations + '</td>'
+      + '<td class="' + (ok ? 'sig-ok' : 'sig-warn') + '">' + esc(i.tail) + '</td></tr>';
+  });
+  document.getElementById('indices').innerHTML = html + '</tbody></table>';
+});
+</script>
+{% endblock %}

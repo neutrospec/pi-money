@@ -2,30 +2,89 @@
 {% block title %}시장 상황판 — Money Market Intelligence{% endblock %}
 {% block content %}
   {% set r = situation.regime %}
+  {% set kr = situation.korea_regime %}
   {% set f = situation.freshness %}
   {% set g = situation.sentiment %}
+  {% macro verdict_word(name) -%}
+    {% if name=='risk_off' %}위험 회피{% elif name=='risk_on' %}위험 선호
+    {% elif name=='neutral' %}중립{% else %}판정 보류{% endif %}
+  {%- endmacro %}
+  {% macro verdict_class(name) -%}
+    {% if name=='risk_off' %}sig-danger{% elif name=='risk_on' %}sig-ok
+    {% elif name=='neutral' %}sig-warn{% else %}sig-muted{% endif %}
+  {%- endmacro %}
+  {% macro verdict_color(name) -%}
+    {% if name=='risk_off' %}#f85149{% elif name=='risk_on' %}#3fb950
+    {% elif name=='neutral' %}#d29922{% else %}#6e7681{% endif %}
+  {%- endmacro %}
   <div class="pagehead">
     <h1>🧭 시장 상황판</h1>
     <div class="sub">캐시된 관측치로 구성한 현재 상태 · {{ situation.as_of }} (KST) 기준</div>
   </div>
 
-  {# Regime uses the traffic-light axis: red always means trouble, never
-     "price went up". The thresholds are heuristics, so the banner states
-     what drove them instead of only showing a verdict. #}
-  <div class="card" style="border-left:4px solid
-    {% if r.regime=='risk_off' %}#f85149{% elif r.regime=='risk_on' %}#3fb950{% else %}#d29922{% endif %};">
-    <div style="display:flex;flex-wrap:wrap;align-items:baseline;gap:12px;">
-      <div style="font-size:22px;font-weight:700;"
-           class="{% if r.regime=='risk_off' %}sig-danger{% elif r.regime=='risk_on' %}sig-ok{% else %}sig-warn{% endif %}">
-        {% if r.regime=='risk_off' %}위험 회피{% elif r.regime=='risk_on' %}위험 선호{% else %}중립{% endif %}
+  {# Two regimes, each labelled by the market it reads. They are shown side by
+     side and never blended: when Korea decouples from the US the disagreement
+     is the finding, and one averaged verdict would erase exactly the thing
+     worth seeing. Red always means trouble, never "price went up". #}
+  <div class="regime-pair">
+    <div class="card" style="margin-bottom:0;border-left:4px solid {{ verdict_color(kr.regime) }};">
+      <div class="card-title">🇰🇷 한국 국면</div>
+      <div style="display:flex;flex-wrap:wrap;align-items:baseline;gap:10px;margin-bottom:8px;">
+        <div style="font-size:22px;font-weight:700;" class="{{ verdict_class(kr.regime) }}">
+          {{ verdict_word(kr.regime) }}
+        </div>
+        <div style="color:#8b949e;font-size:12px;">
+          구성요소 {{ kr.component_count }}/{{ kr.component_total }}개 · 순점수 {{ kr.score }}
+        </div>
       </div>
-      <div style="color:#8b949e;font-size:13px;">{{ r.reasons | join(' · ') }}</div>
+      {% for c in kr.components %}
+      <div style="display:flex;justify-content:space-between;gap:10px;font-size:12px;padding:3px 0;border-top:1px solid #21262d;">
+        <span style="color:#8b949e;">{{ c.label }}</span>
+        <span class="{% if c.score > 0 %}sig-ok{% elif c.score < 0 %}sig-danger{% else %}sig-warn{% endif %}"
+              title="{{ c.detail }}">
+          {{ '위험 선호' if c.score > 0 else ('위험 회피' if c.score < 0 else '중립') }}
+          {%- if c.percentile is defined and c.percentile is not none %} · {{ c.percentile | round(0) | int }}점{% endif %}
+        </span>
+      </div>
+      {% endfor %}
+      {% for p in kr.pending %}
+      <div style="font-size:11px;color:#6e7681;padding:3px 0;border-top:1px solid #21262d;">
+        {{ p.label }} — {{ p.reason }}
+      </div>
+      {% endfor %}
+      <div style="color:#6e7681;font-size:11px;margin-top:8px;">
+        관측일 {{ kr.as_of or '-' }} · 자체 분포 백분위 기반 참고 분류이며 투자 판단이 아닙니다.
+      </div>
     </div>
-    <div style="color:#6e7681;font-size:11px;margin-top:8px;">
-      관측일 VIX {{ r.as_of.vix or '-' }} · 신용스프레드 {{ r.as_of.credit_spread or '-' }} · S&amp;P {{ r.as_of.sp500 or '-' }}
-      · 임계값 기반 참고 분류이며 투자 판단이 아닙니다.
+
+    <div class="card" style="margin-bottom:0;border-left:4px solid {{ verdict_color(r.regime) }};">
+      <div class="card-title">🇺🇸 미국 국면</div>
+      <div style="display:flex;flex-wrap:wrap;align-items:baseline;gap:10px;margin-bottom:8px;">
+        <div style="font-size:22px;font-weight:700;" class="{{ verdict_class(r.regime) }}">
+          {{ verdict_word(r.regime) }}
+        </div>
+        <div style="color:#8b949e;font-size:12px;">순점수 {{ r.score }}</div>
+      </div>
+      {% for reason in r.reasons %}
+      <div style="font-size:12px;color:#8b949e;padding:3px 0;border-top:1px solid #21262d;">{{ reason }}</div>
+      {% endfor %}
+      <div style="color:#6e7681;font-size:11px;margin-top:8px;">
+        관측일 VIX {{ r.as_of.vix or '-' }} · 신용스프레드 {{ r.as_of.credit_spread or '-' }} · S&amp;P {{ r.as_of.sp500 or '-' }}
+        · 임계값 기반 참고 분류이며 투자 판단이 아닙니다.
+      </div>
     </div>
   </div>
+  {% if kr.regime != r.regime %}
+  <div class="card" style="border-left:4px solid #d29922;">
+    <div style="font-size:13px;">
+      두 국면이 갈립니다 — 한국 <strong class="{{ verdict_class(kr.regime) }}">{{ verdict_word(kr.regime) }}</strong>,
+      미국 <strong class="{{ verdict_class(r.regime) }}">{{ verdict_word(r.regime) }}</strong>.
+    </div>
+    <div style="color:#8b949e;font-size:12px;margin-top:6px;">
+      두 분류기는 서로 다른 시장의 입력을 씁니다. 미국 국면을 한국 자산의 판단 근거로 그대로 옮기지 마세요.
+    </div>
+  </div>
+  {% endif %}
 
   {% if g.status == 'ok' %}
   <div class="card">

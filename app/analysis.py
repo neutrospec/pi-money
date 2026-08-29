@@ -31,6 +31,95 @@ def _latest_if_recent(points: list[dict] | None, max_age_days: int) -> dict | No
 # --------------------------------------------------------------------------
 # Yield curve
 # --------------------------------------------------------------------------
+# Tenors we hold for each sovereign curve, shortest first.  A curve is only
+# meaningful when its points share an observation date, so the builder aligns
+# on the newest date every requested tenor actually has.
+CURVE_TENORS = {
+    "kr": (
+        (1.0, "kr_treasury_1y", "1년"),
+        (2.0, "kr_treasury_2y", "2년"),
+        (3.0, "kr_treasury_3y", "3년"),
+        (5.0, "kr_treasury_5y", "5년"),
+        (10.0, "kr_treasury_10y", "10년"),
+        (30.0, "kr_treasury_30y", "30년"),
+    ),
+    "us": (
+        (0.25, "us_3m", "3개월"),
+        (1.0, "us_1y", "1년"),
+        (2.0, "us_2y", "2년"),
+        (5.0, "us_5y", "5년"),
+        (10.0, "us_10y", "10년"),
+        (30.0, "us_30y", "30년"),
+    ),
+}
+
+
+def yield_curve(series: dict[str, list[dict]], country: str) -> dict:
+    """Build an aligned sovereign curve plus a comparison a month earlier.
+
+    Mixing tenors observed on different days would draw a curve that never
+    existed, so every point comes from one date: the newest on which all
+    requested tenors reported.
+    """
+    tenors = CURVE_TENORS.get(country)
+    if not tenors:
+        return {"error": f"unknown curve: {country}"}
+    by_key = {
+        key: {point["date"]: point["value"] for point in series.get(key, [])}
+        for _, key, _ in tenors
+    }
+    available = [set(values) for values in by_key.values() if values]
+    if len(available) < 2:
+        return {"error": "not enough tenors collected for a curve"}
+    common = sorted(set.intersection(*available))
+    if not common:
+        return {"error": "tenors share no observation date"}
+    latest = common[-1]
+    # A month of trading days back, or the oldest date we can align on.
+    previous = common[max(0, len(common) - 22)] if len(common) > 1 else None
+
+    def read(day: str) -> list[dict]:
+        return [
+            {
+                "tenor_years": years,
+                "label": label,
+                "key": key,
+                "value": by_key[key][day],
+            }
+            for years, key, label in tenors if day in by_key[key]
+        ]
+
+    points = read(latest)
+    comparison = read(previous) if previous and previous != latest else []
+    spreads = {}
+    values = {item["key"]: item["value"] for item in points}
+    for name, long_key, short_key in (
+        ("10y_2y", f"{country}_treasury_10y", f"{country}_treasury_2y"),
+        ("10y_3y", f"{country}_treasury_10y", f"{country}_treasury_3y"),
+        ("30y_10y", f"{country}_treasury_30y", f"{country}_treasury_10y"),
+        ("us_10y_2y", "us_10y", "us_2y"),
+        ("us_30y_10y", "us_30y", "us_10y"),
+    ):
+        if long_key in values and short_key in values:
+            spreads[name] = round(values[long_key] - values[short_key], 3)
+    inverted = [
+        (points[index]["label"], points[index + 1]["label"])
+        for index in range(len(points) - 1)
+        if points[index + 1]["value"] < points[index]["value"]
+    ]
+    return {
+        "country": country,
+        "as_of": latest,
+        "compared_to": previous if comparison else None,
+        "points": points,
+        "comparison": comparison,
+        "spreads": spreads,
+        "inverted_segments": inverted,
+        "observations": len(common),
+        "method": "모든 만기가 함께 관측된 가장 최근 날짜로 정렬한 곡선입니다.",
+    }
+
+
 def term_spread(short: list[dict], long: list[dict]) -> dict | None:
     """Long-term minus short-term yield (e.g. 10y - 2y)."""
     if not short or not long:
@@ -356,4 +445,240 @@ def market_regime(
             "sp500": sp_point["date"] if sp_point else None,
         },
         "method": "rule_based_v1",
+    }
+
+
+# --------------------------------------------------------------------------
+# Korea market regime (percentile-based)
+# --------------------------------------------------------------------------
+# The US classifier above reads VIX, the US IG spread, and the S&P 200-day
+# average.  All three are American, so on a Korean money-market dashboard it
+# answers a question nobody asked: it called 2026-08 "risk_on" while KOSPI sat
+# 24.8% below its June peak at 80% annualised volatility.  This one is built
+# from Korean inputs and differs in two ways that the data forced.
+#
+# It scores each input against *its own* recent distribution rather than an
+# absolute threshold.  A 0.688%p AA- corporate spread looks narrow next to the
+# US IG rule of thumb (<1.0%), but it sits at the 87th percentile of its own
+# last 250 sessions — wide, not narrow.  A fixed cut would have read the sign
+# backwards.
+#
+# It also scores trend and drawdown separately, both from KOSPI.  That double
+# weight is deliberate: a market above its 200-day average *and* deep below its
+# 52-week high is a bounce inside a crash, and making the two components
+# disagree is precisely what surfaces that state instead of averaging it away.
+KR_PERCENTILE_WINDOW = 250
+KR_DRAWDOWN_WINDOW = 252
+KR_RISK_ON_PERCENTILE = 80.0
+KR_RISK_OFF_PERCENTILE = 20.0
+KR_MIN_ACTIVE_COMPONENTS = 3
+KR_MAX_AGE_DAYS = 7
+
+# Following the sentiment gauge: a component whose history is too short to
+# normalise is excluded and reported, never filled with a plausible guess.
+KR_MIN_HISTORY = {
+    "volatility": 50,    # VKOSPI against its own distribution
+    "credit": 60,        # a spread against its own recent distribution
+    "funding": 60,
+    "trend": 200,        # the moving average it is measured against
+    # a drawdown series needs its own trailing window before it starts, and
+    # then enough of itself to be a distribution
+    "drawdown": KR_DRAWDOWN_WINDOW + 250,
+}
+
+
+def _risk_on_percentile(value: float, history: list[float], *, invert: bool) -> float:
+    """Where ``value`` sits in ``history``, oriented so 100 reads as risk-on."""
+    if not history:
+        return 50.0
+    below = sum(1 for item in history if item < value)
+    percentile = below / len(history) * 100
+    return round(100 - percentile if invert else percentile, 1)
+
+
+def _percentile_component(
+    key: str,
+    label: str,
+    series: list[dict] | None,
+    *,
+    invert: bool,
+    unit: str,
+    note: str,
+    window: int = KR_PERCENTILE_WINDOW,
+) -> dict:
+    """Score one series against its own trailing distribution."""
+    minimum = KR_MIN_HISTORY[key]
+    if not series or len(series) < minimum:
+        return {
+            "key": key, "label": label, "score": None,
+            "reason": f"{note} 이력이 {minimum}거래일 이상 쌓이면 활성화됩니다 "
+                      f"(현재 {len(series or [])})",
+        }
+    point = _latest_if_recent(series, KR_MAX_AGE_DAYS)
+    if point is None:
+        return {
+            "key": key, "label": label, "score": None,
+            "reason": f"{note} 최신 관측이 {KR_MAX_AGE_DAYS}일보다 오래돼 제외했습니다",
+        }
+    values = [item["value"] for item in series]
+    percentile = _risk_on_percentile(
+        point["value"], values[-window:], invert=invert
+    )
+    return {
+        "key": key,
+        "label": label,
+        "score": _cut(percentile),
+        "percentile": percentile,
+        "value": point["value"],
+        "as_of": point["date"],
+        "detail": f"{note} {point['value']}{unit}, 최근 {min(window, len(values))}"
+                  f"거래일 분포에서 위험선호 방향 {percentile:.0f}점",
+    }
+
+
+def _cut(percentile: float) -> int:
+    if percentile >= KR_RISK_ON_PERCENTILE:
+        return 1
+    if percentile <= KR_RISK_OFF_PERCENTILE:
+        return -1
+    return 0
+
+
+def _kospi_trend(kospi: list[dict] | None) -> dict:
+    minimum = KR_MIN_HISTORY["trend"]
+    if not kospi or len(kospi) < minimum:
+        return {
+            "key": "trend", "label": "주가 추세", "score": None,
+            "reason": f"코스피 이력이 {minimum}거래일 이상 쌓이면 활성화됩니다 "
+                      f"(현재 {len(kospi or [])})",
+        }
+    point = _latest_if_recent(kospi, KR_MAX_AGE_DAYS)
+    if point is None:
+        return {
+            "key": "trend", "label": "주가 추세", "score": None,
+            "reason": f"코스피 최신 관측이 {KR_MAX_AGE_DAYS}일보다 오래돼 제외했습니다",
+        }
+    values = [item["value"] for item in kospi]
+    average = float(np.mean(values[-minimum:]))
+    deviation = (values[-1] - average) / average * 100
+    return {
+        "key": "trend",
+        "label": "주가 추세",
+        "score": 1 if values[-1] >= average else -1,
+        "value": round(deviation, 2),
+        "as_of": point["date"],
+        "detail": f"코스피가 {minimum}일 이동평균 대비 {deviation:+.1f}%",
+    }
+
+
+def _kospi_drawdown(kospi: list[dict] | None) -> dict:
+    """Score the distance below the 52-week high against 20 years of the same.
+
+    The window here is the full history, not the trailing 250 sessions the
+    spreads use: a spread's normal level drifts with the rate cycle, but a
+    drawdown is already a ratio, and a one-year baseline would let the current
+    crash define what "normal" means and score itself as unremarkable.
+    """
+    minimum = KR_MIN_HISTORY["drawdown"]
+    if not kospi or len(kospi) < minimum:
+        return {
+            "key": "drawdown", "label": "고점 대비 낙폭", "score": None,
+            "reason": f"코스피 이력이 {minimum}거래일 이상 쌓이면 활성화됩니다 "
+                      f"(현재 {len(kospi or [])})",
+        }
+    point = _latest_if_recent(kospi, KR_MAX_AGE_DAYS)
+    if point is None:
+        return {
+            "key": "drawdown", "label": "고점 대비 낙폭", "score": None,
+            "reason": f"코스피 최신 관측이 {KR_MAX_AGE_DAYS}일보다 오래돼 제외했습니다",
+        }
+    values = [item["value"] for item in kospi]
+    window = KR_DRAWDOWN_WINDOW
+    history = [
+        values[index] / max(values[index - window:index + 1]) - 1
+        for index in range(window, len(values))
+    ]
+    current = history[-1]
+    percentile = _risk_on_percentile(current, history, invert=False)
+    return {
+        "key": "drawdown",
+        "label": "고점 대비 낙폭",
+        "score": _cut(percentile),
+        "percentile": percentile,
+        "value": round(current * 100, 2),
+        "as_of": point["date"],
+        "detail": f"코스피가 52주 고점 대비 {current * 100:+.1f}%, "
+                  f"20년 낙폭 분포에서 위험선호 방향 {percentile:.0f}점",
+    }
+
+
+def korea_regime(
+    vkospi: list[dict] | None,
+    credit_spread: list[dict] | None,
+    funding_spread: list[dict] | None,
+    kospi: list[dict] | None,
+) -> dict:
+    """Classify Korean conditions from Korean inputs, by percentile.
+
+    Each component votes -1/0/+1 and the verdict uses the *ratio* of the net
+    vote to the components that actually reported. A raw sum would make this
+    classifier more trigger-happy than the three-input US one simply because
+    it has more inputs; the ratio keeps the bar at the same place and lets a
+    component drop out without silently loosening the verdict.
+    """
+    components = [
+        _percentile_component(
+            "volatility", "변동성", vkospi, invert=True, unit="",
+            note="VKOSPI",
+        ),
+        _percentile_component(
+            "credit", "회사채 신용", credit_spread, invert=True, unit="%p",
+            note="회사채 AA- 3년 − 국고채 3년 스프레드",
+        ),
+        _percentile_component(
+            "funding", "단기 자금시장", funding_spread, invert=True, unit="%p",
+            note="CP 91일 − CD 91일 스프레드",
+        ),
+        _kospi_trend(kospi),
+        _kospi_drawdown(kospi),
+    ]
+    active = [item for item in components if item.get("score") is not None]
+    pending = [
+        {"key": item["key"], "label": item["label"], "reason": item["reason"]}
+        for item in components if item.get("score") is None
+    ]
+    total = sum(int(item["score"]) for item in active)
+    if len(active) < KR_MIN_ACTIVE_COMPONENTS:
+        regime = "unknown"
+        ratio = None
+    else:
+        ratio = total / len(active)
+        if ratio >= 0.5:
+            regime = "risk_on"
+        elif ratio <= -0.5:
+            regime = "risk_off"
+        else:
+            regime = "neutral"
+    return {
+        "regime": regime,
+        "score": total,
+        "ratio": None if ratio is None else round(ratio, 2),
+        "reasons": [item["detail"] for item in active],
+        "components": active,
+        "pending": pending,
+        "component_count": len(active),
+        "component_total": len(components),
+        "as_of": max(
+            (item["as_of"] for item in active if item.get("as_of")), default=None
+        ),
+        "method": "kr_percentile_rule_v1",
+        "method_note": (
+            f"각 입력을 자체 분포에서 위험선호 방향 백분위로 환산해 "
+            f"{KR_RISK_ON_PERCENTILE:.0f}점 이상 +1, "
+            f"{KR_RISK_OFF_PERCENTILE:.0f}점 이하 −1로 채점합니다. "
+            f"스프레드는 최근 {KR_PERCENTILE_WINDOW}거래일, 낙폭은 전체 이력을 "
+            f"분포로 씁니다. 이력이 부족한 구성요소는 추정하지 않고 pending에 "
+            f"사유를 남기며, 활성 구성요소가 "
+            f"{KR_MIN_ACTIVE_COMPONENTS}개 미만이면 판정하지 않습니다."
+        ),
     }

@@ -23,7 +23,7 @@ directly; pi calls the matching cache-only REST endpoint. MCP reads SQLite direc
 | `market_index_analysis` | Trend, realized volatility, and maximum drawdown | allowed index `symbol`; `years` 1–20 |
 | `market_technical` | RSI, MACD, Bollinger, and trend description | allowed index `symbol`; `years` 1–20 |
 | `market_risk` | Sharpe, historical VaR/ES, and maximum drawdown | allowed index `symbol`; `years` 1–20 |
-| `market_regime` | Rule-based VIX/credit/S&P market-state summary | none |
+| `market_regime` | Two rule-based regime readings. Top level is the US one (VIX/credit/S&P); `korea_regime` is the Korean one, scored by percentile against each input's own distribution | none |
 | `market_derived_metrics` | Aligned macro transformations and 20/60-day cross-asset relative strength | none |
 | `market_breadth` | KOSPI/KOSDAQ advance-decline, turnover, concentration, and bounded 20-day breadth | none |
 

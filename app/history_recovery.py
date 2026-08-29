@@ -41,6 +41,16 @@ ACTIVE = {"pending", "retryable", "running"}
 TERMINAL = {"complete", "verified_empty", "blocked", "exhausted"}
 
 
+class ResourceBudgetExceeded(RuntimeError):
+    """This run's own row guard stopped the item; the provider did not fail.
+
+    It must stay distinct from a provider error. Attempts are finite, so
+    charging a self-imposed budget skip against them would retire a day that
+    is perfectly recoverable — a large dataset that keeps landing at the tail
+    of a run would be declared exhausted after three sweeps.
+    """
+
+
 def _fingerprint(*parts: object) -> str:
     payload = json.dumps(parts, ensure_ascii=False, sort_keys=True, default=str)
     return hashlib.sha256(payload.encode()).hexdigest()[:24]
@@ -84,7 +94,15 @@ def _manifest_dates(row: dict) -> set[str]:
 def _ensure_indicator_targets() -> None:
     today = kst_today()
     start = (today - timedelta(days=365 * 3)).isoformat()
+    enrolled: set[str] = set()
     for key, spec in indicators.catalog().items():
+        # A series another collector writes has no single-key provider call
+        # behind it. Enrolling it spent every attempt on a request that
+        # cannot exist, then parked the row at "exhausted", which the ledger
+        # reports as needing attention forever.
+        if indicators.is_collector_fed(key):
+            continue
+        enrolled.add(key)
         source_spec = {
             "source": spec["source"],
             "series": spec["series"],
@@ -99,6 +117,18 @@ def _ensure_indicator_targets() -> None:
             fingerprint=_target_fingerprint("indicator_history", key, source_spec),
             coverage_start=start,
             coverage_end=today.isoformat(),
+        )
+    # Rows left by a series that has since been de-catalogued or handed to a
+    # collector describe work no attempt can finish, so they are removed
+    # rather than re-armed.
+    stale = {
+        row["target"] for row in db.list_recovery_targets(
+            layer=LAYER, kind="indicator_history", manifest=False
+        )
+    } - enrolled
+    if stale:
+        db.delete_recovery_targets(
+            layer=LAYER, kind="indicator_history", targets=stale
         )
 
 
@@ -153,6 +183,7 @@ def _ensure_krx_targets() -> None:
         # Freeze the historical generation. New sessions are handled by the
         # first-line collector instead of growing this queue forever.
         days = existing_days or initial_days
+        authorized = False
         for day in days:
             row = db.ensure_recovery_target(
                 layer=LAYER,
@@ -165,6 +196,7 @@ def _ensure_krx_targets() -> None:
             )
             run_status = db.market_run_status("krx", spec["dataset"], day)
             if run_status in {"success", "empty"}:
+                authorized = True
                 db.update_recovery_target(
                     LAYER, "krx_history", spec["dataset"], day,
                     status="complete" if run_status == "success" else "verified_empty",
@@ -182,6 +214,20 @@ def _ensure_krx_targets() -> None:
                     reason="krx_dataset_authorization_blocked",
                     details={"inherited_from": "krx_access"},
                 )
+        # A dataset the first-line collector already fetched has proved its
+        # authorization. Only _recover_krx used to record that, so a dataset
+        # whose every day was completed by first-line collection left its
+        # access row pending with no attempt left to make — and one such row
+        # is enough to keep the historical layer from ever settling.
+        if authorized and access["status"] not in {"complete", "blocked"}:
+            db.update_recovery_target(
+                LAYER, "krx_access", spec["dataset"], "authorization",
+                status="complete",
+                next_attempt_at=None,
+                completed_at=access.get("completed_at") or db.utc_now(),
+                reason="market_run_authorization_verified",
+                details={"verified_from": "first_line_market_run"},
+            )
 
 
 def ensure_targets() -> None:
@@ -415,7 +461,7 @@ def _recover_krx(row: dict, remaining_rows: int) -> tuple[dict, int]:
     spec = _krx_spec(row["target"])
     raw_rows = krx.fetch_dataset(spec, row["scope"])
     if len(raw_rows) > remaining_rows:
-        raise RuntimeError(
+        raise ResourceBudgetExceeded(
             f"historical KRX row budget exceeded: {len(raw_rows)} > {remaining_rows}"
         )
     normalized = krx.normalize_rows(spec, raw_rows, row["scope"])
@@ -508,6 +554,8 @@ def run() -> dict:
                 continue
             if kind == "krx_history" and krx_dataset_blocked(current["target"]):
                 continue
+            if kind == "krx_history" and remaining_krx_rows <= 0:
+                break
             pending = current
             row = _set_running(pending)
             kind_attempts += 1
@@ -522,6 +570,26 @@ def run() -> dict:
                     outcome, used = _recover_krx(row, remaining_krx_rows)
                     remaining_krx_rows -= used
                 ok += 1
+            except ResourceBudgetExceeded as exc:
+                # Hand the row back untouched and stop this kind: the sweep
+                # has spent its allowance, not its attempts. The item stays
+                # in the pending count, which the caller reports as backlog.
+                db.update_recovery_target(
+                    row["layer"], row["kind"], row["target"], row["scope"],
+                    status="pending",
+                    next_attempt_at=None,
+                    reason="run_row_budget_deferred",
+                    details={"deferred": str(exc)},
+                )
+                attempted -= 1
+                outcomes.append({
+                    "kind": kind,
+                    "target": row["target"],
+                    "scope": row["scope"],
+                    "status": "deferred",
+                    "reason": "run_row_budget_deferred",
+                })
+                break
             except Exception as exc:  # one target must not abort the sweep
                 outcome = _fail(row, exc)
                 if kind == "krx_history" and outcome["status"] == "blocked":

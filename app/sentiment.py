@@ -14,6 +14,7 @@ discount it.
 from __future__ import annotations
 
 from datetime import timedelta
+from functools import lru_cache
 
 from app import db, market_metrics
 from app.timeutil import kst_today
@@ -82,49 +83,52 @@ def _momentum() -> dict | None:
     }
 
 
+@lru_cache(maxsize=1)
+def _breadth_snapshot() -> dict:
+    """Read the KRX breadth snapshot once per gauge build.
+
+    Two components need it and each full scan costs several hundred
+    milliseconds against a table of two hundred thousand rows.  The cache is
+    cleared at the start of every :func:`gauge` call so a page never serves a
+    reading older than the request that asked for it.
+    """
+    return market_metrics.krx_breadth_snapshot()
+
+
 def _strength() -> dict | None:
-    """New highs against new lows across every KRX-listed stock."""
-    window = 20
-    counts = {"high": 0, "low": 0, "eligible": 0}
-    as_of = None
-    for dataset in ("stk_bydd_trd", "ksq_bydd_trd"):
-        latest = db.get_latest_market_daily("krx", dataset)
-        if not latest["rows"]:
+    """New highs against new lows across every KRX-listed stock.
+
+    The breadth snapshot already counts these while computing its 20-day
+    statistics, so this reads them rather than scanning the table again.
+    """
+    snapshot = _breadth_snapshot()
+    highs = lows = eligible = 0
+    for market in snapshot["markets"]:
+        if market["status"] != "ok":
             continue
-        as_of = max(as_of or latest["date"], latest["date"])
-        history: dict[str, list[float]] = {}
-        for row in db.get_market_close_history(
-            "krx", dataset, end=latest["date"], observations=window
-        ):
-            history.setdefault(row["symbol"], []).append(row["close"])
-        for values in history.values():
-            if len(values) < window:
-                continue
-            counts["eligible"] += 1
-            if values[-1] >= max(values):
-                counts["high"] += 1
-            elif values[-1] <= min(values):
-                counts["low"] += 1
-    if counts["eligible"] < 100:
+        history = market.get("history_20d") or {}
+        highs += history.get("new_highs") or 0
+        lows += history.get("new_lows") or 0
+        eligible += history.get("eligible_issues") or 0
+    if eligible < 100:
         return None
-    total = counts["high"] + counts["low"]
-    ratio = 0.5 if total == 0 else counts["high"] / total
+    total = highs + lows
+    ratio = 0.5 if total == 0 else highs / total
     return {
         "key": "strength",
         "label": "주가 강도",
         "score": _scale(ratio, 0.0, 1.0),
         "detail": (
-            f"{window}일 신고가 {counts['high']}종목 vs 신저가 {counts['low']}종목 "
-            f"({counts['eligible']}종목 대상)"
+            f"20일 신고가 {highs}종목 vs 신저가 {lows}종목 ({eligible}종목 대상)"
         ),
-        "as_of": as_of,
-        "method": f"신고가 / (신고가 + 신저가), {window}거래일 기준",
+        "as_of": snapshot["as_of"],
+        "method": "신고가 / (신고가 + 신저가), 20거래일 기준",
     }
 
 
 def _breadth() -> dict | None:
     """Turnover flowing into rising shares against falling ones."""
-    snapshot = market_metrics.krx_breadth_snapshot()
+    snapshot = _breadth_snapshot()
     up = down = 0.0
     for market in snapshot["markets"]:
         if market["status"] != "ok":
@@ -244,6 +248,7 @@ def band(score: float) -> tuple[str, str]:
 
 def gauge() -> dict:
     """Compose the gauge from whichever components can be measured today."""
+    _breadth_snapshot.cache_clear()
     live, pending = [], []
     for build in COMPONENTS:
         try:
