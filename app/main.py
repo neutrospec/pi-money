@@ -122,6 +122,7 @@ def layers_page(request: Request):
         request, "layers.html",
         {
             "c": layers_module.cards(),
+            "note": backtest.verdict_note(),
             "cuts": {"on": analysis.KR_RISK_ON_PERCENTILE,
                      "off": analysis.KR_RISK_OFF_PERCENTILE},
             "active": "layers",

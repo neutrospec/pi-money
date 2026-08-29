@@ -15,7 +15,7 @@ always filled is a brief nobody reads. Adding an item here means removing one.
 """
 from __future__ import annotations
 
-from app import analysis, db, layers, market_metrics, normalize, sentiment
+from app import analysis, backtest, db, layers, market_metrics, normalize, sentiment
 from app.collectors import indicators
 from app.timeutil import kst_today
 
@@ -264,6 +264,9 @@ def brief() -> dict:
         "regime": us,
         "sentiment": gauge,
         "confidence": confidence(korea, gauge),
+        # What the verification found about this verdict, carried to where the
+        # verdict is read. A backtest on its own page changes nobody's mind.
+        "verdict_note": backtest.verdict_note(),
         "disagreements": disagreements(korea, us, gauge),
         "flip_conditions": _flip_conditions(korea),
         "movers": movers(),

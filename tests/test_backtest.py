@@ -262,6 +262,72 @@ class PriceRuleTests(TemporaryDatabaseTest):
         self.assertIn("홀드아웃", report["reason"])
 
 
+class VerdictNoteTests(TemporaryDatabaseTest):
+    """The finding has to reach the screen showing the verdict, not just its own."""
+
+    def seed(self, verdicts, prices):
+        db.replace_index_points("^KS11", prices)
+        db.save_backtest_verdicts([
+            {"date": day, "mode": "observed", "korea_regime": verdict,
+             "korea_score": 0, "korea_active": 5,
+             "korea_components": '{"trend": -1}',
+             "us_regime": "neutral", "us_score": 0}
+            for day, verdict in verdicts
+        ])
+
+    def days(self, count, start_day=1):
+        return [f"2026-01-{start_day + offset:02d}" for offset in range(count)]
+
+    def test_the_standing_line_appears_even_when_today_is_not_a_warning(self):
+        # A caveat shown only on warning days teaches the reader that quiet
+        # days are validated, which is the opposite of what was measured.
+        days = self.days(28)
+        self.seed([(day, "neutral") for day in days],
+                  [{"date": day, "value": 100.0} for day in days])
+        note = backtest.verdict_note()
+        self.assertFalse(note["warning_now"])
+        self.assertIn("하락 예측이 아닙니다", note["standing"])
+        self.assertIsNone(note["urgent"])
+
+    def test_a_warning_today_adds_the_urgent_line(self):
+        days = self.days(28)
+        verdicts = [(day, "neutral") for day in days[:-1]] + [(days[-1], "risk_off")]
+        self.seed(verdicts, [{"date": day, "value": 100.0} for day in days])
+        note = backtest.verdict_note()
+        self.assertTrue(note["warning_now"])
+
+    def test_an_empty_cache_yields_no_note_rather_than_an_empty_one(self):
+        self.assertIsNone(backtest.verdict_note())
+
+    def test_the_note_quotes_the_stratified_figures_not_only_the_pooled_one(self):
+        # Pooled lift alone is the number that misled; the standing line must
+        # never carry it without its stratified companions.
+        days = self.days(28)
+        verdicts = [(day, "risk_off" if index < 4 else "neutral")
+                    for index, day in enumerate(days)]
+        self.seed(verdicts, [{"date": day, "value": 100.0 - index}
+                             for index, day in enumerate(days)])
+        note = backtest.verdict_note()
+        self.assertIn("층별 lift", note["standing"])
+        self.assertIn("합산", note["standing"])
+
+    def test_a_record_with_no_warnings_says_so_rather_than_quoting_nothing(self):
+        days = self.days(28)
+        self.seed([(day, "neutral") for day in days],
+                  [{"date": day, "value": 100.0} for day in days])
+        self.assertIn("나온 적이 없어", backtest.verdict_note()["standing"])
+
+    def test_the_memo_is_invalidated_when_the_cache_changes(self):
+        days = self.days(28)
+        self.seed([(day, "neutral") for day in days],
+                  [{"date": day, "value": 100.0} for day in days])
+        first = backtest.verdict_note()
+        self.seed([(day, "risk_off") for day in days],
+                  [{"date": day, "value": 100.0} for day in days])
+        second = backtest.verdict_note()
+        self.assertNotEqual(first["warning_now"], second["warning_now"])
+
+
 class StratifiedTests(unittest.TestCase):
     """Pooled lift credits being switched on during bad years. Stratified does not."""
 

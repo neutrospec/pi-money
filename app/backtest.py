@@ -699,6 +699,76 @@ def _recent_caveat(verdicts: list[dict], outcomes: dict[str, dict], *,
     }
 
 
+def _standing_line(verdicts: list[dict], pooled: dict, layered: dict) -> str:
+    """One sentence, built from the record rather than written down.
+
+    Written from data so it cannot drift away from what the backtest says. A
+    record with no warnings at all gets a different sentence — quoting a lift
+    of None as a finding would be worse than saying nothing.
+    """
+    head = (
+        f"이 판정은 하락 예측이 아닙니다. {verdicts[0]['date'][:4]}년 이후 "
+        f"{len(verdicts)}거래일을 같은 코드로 재생해 검증했습니다"
+    )
+    lifts = {name: layered[name]["weighted_lift"] for name in ("year", "quarter", "half")}
+    if pooled["lift"] is None or any(value is None for value in lifts.values()):
+        return head + " — 아직 위험 회피 판정이 나온 적이 없어 적중을 잴 수 없습니다."
+    return (
+        head + ": 위험 회피 판정은 그 해 안에서 위험한 날을 고르지 못했습니다 — "
+        f"층별 lift 연 {lifts['year']:+.1f} / 분기 {lifts['quarter']:+.1f} / "
+        f"반기 {lifts['half']:+.1f}. (합산 {pooled['lift']:+.1f}은 위험했던 해에 "
+        f"켜져 있던 것까지 점수로 친 값이라 믿을 수 없습니다.)"
+    )
+
+
+# Memoised because this line goes on every screen that shows a verdict and
+# the stratified pass costs ~180ms. Keyed on the cache's own shape, so a
+# replay invalidates it and nothing else has to remember to.
+_NOTE_CACHE: dict[tuple, dict | None] = {}
+
+
+def verdict_note(field: str = "korea_regime") -> dict | None:
+    """What the screens showing this verdict have to say about it, always.
+
+    A backtest that lives only on its own page is decoration. The brief, the
+    front page and the layer cards render ``risk_off`` in red, which is where
+    someone might act on it, so the finding has to travel there.
+
+    Two levels, because two things are true at once. The standing line states
+    what the verification found and is shown whatever today's verdict is —
+    a caveat that appears only on warning days teaches the reader that quiet
+    days are validated, which is the opposite of what was measured. The urgent
+    line is added when the verdict *is* a warning right now, because that is
+    the moment someone might mistake it for a forecast.
+
+    Everything here is derived from the cached record rather than written down,
+    so it cannot drift away from what the backtest actually says.
+    """
+    verdicts = db.get_backtest_verdicts()
+    if not verdicts:
+        return None
+    key = (field, len(verdicts), verdicts[-1]["date"], verdicts[-1]["computed_at"])
+    if key in _NOTE_CACHE:
+        return _NOTE_CACHE[key]
+    market = "korea" if field.startswith("korea") else "us"
+    outcomes = forward(BENCHMARK[market], HORIZON_DAYS)
+    pooled = contingency(verdicts, outcomes, field=field)
+    layered = stratified(verdicts, outcomes, field=field)
+    warning_now = verdicts[-1][field] == WARNING
+    urgent = _recent_caveat(verdicts, outcomes, field=field) if warning_now else None
+    note = {
+        "field": field,
+        "warning_now": warning_now,
+        "window": f"{verdicts[0]['date']} ~ {verdicts[-1]['date']}",
+        "standing": _standing_line(verdicts, pooled, layered),
+        "urgent": urgent["text"] if urgent else None,
+        "link": "/backtest",
+    }
+    _NOTE_CACHE.clear()
+    _NOTE_CACHE[key] = note
+    return note
+
+
 def report(field: str = "korea_regime") -> dict:
     """Everything above for one classifier, with its limits attached."""
     market = "korea" if field.startswith("korea") else "us"
