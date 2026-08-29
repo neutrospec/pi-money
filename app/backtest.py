@@ -482,6 +482,35 @@ def structure(verdicts: list[dict]) -> dict:
     }
 
 
+def by_completeness(verdicts: list[dict], outcomes: dict[str, dict], *,
+                    field: str) -> list[dict]:
+    """Split the record by how many components were actually voting.
+
+    A longer window is bought at the cost of a uniform one. The spread series
+    reach back to 2006 and kr_vkospi only to 2010, so the early years run with
+    volatility pending — a legitimate verdict under the classifier's own
+    minimum, and a *different* verdict from a five-component one. Mixing them
+    into one accuracy number would let a four-component era silently dilute or
+    flatter the five-component one, which is the same averaging-away this
+    project rejects everywhere else.
+    """
+    groups: dict[int, list[dict]] = {}
+    for row in verdicts:
+        groups.setdefault(row["korea_active"], []).append(row)
+    out = []
+    for active, rows in sorted(groups.items(), reverse=True):
+        table = contingency(rows, outcomes, field=field)
+        out.append({
+            "active_components": active,
+            "days": len(rows),
+            "start": rows[0]["date"],
+            "end": rows[-1]["date"],
+            "contingency": table,
+            "conditional": conditional(rows, outcomes, field=field),
+        })
+    return out
+
+
 def report(field: str = "korea_regime") -> dict:
     """Everything above for one classifier, with its limits attached."""
     market = "korea" if field.startswith("korea") else "us"
@@ -509,6 +538,11 @@ def report(field: str = "korea_regime") -> dict:
         # all — rendering them under a US heading would be Korean internals
         # wearing the wrong label.
         "structure": structure(verdicts) if market == "korea" else None,
+        # Never one number across eras with different evidence behind them.
+        "by_completeness": (
+            by_completeness(verdicts, outcomes, field=field)
+            if market == "korea" else None
+        ),
         # The one test available today that separates a regularity from a
         # property of this particular window. Korea only: the rule is built
         # from ^KS11 and there is no equivalent for the US classifier.

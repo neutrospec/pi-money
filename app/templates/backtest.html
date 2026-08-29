@@ -163,6 +163,30 @@
   </div>
   {% endif %}
 
+  {% if r.by_completeness and r.by_completeness | length > 1 %}
+  <div class="card">
+    <div class="card-title">활성 구성요소별
+      <span style="color:#8b949e;font-weight:400;font-size:12px;">근거 수가 다른 시기를 한 숫자로 합치지 않습니다</span></div>
+    <div class="scroll"><table>
+      <thead><tr><th>활성</th><th>구간</th><th>일수</th><th>경고</th><th>적중</th>
+        <th>기저율</th><th>lift</th></tr></thead>
+      <tbody>
+      {% for g in r.by_completeness %}
+      <tr>
+        <td>{{ g.active_components }}/5</td>
+        <td>{{ g.start }} ~ {{ g.end }}</td>
+        <td class="num">{{ g.days }}</td>
+        <td class="num">{{ g.contingency.warned }}</td>
+        <td class="num">{{ g.contingency.hit }}</td>
+        <td class="num">{{ g.contingency.base_rate }}%</td>
+        <td class="num" style="color:{% if g.contingency.lift and g.contingency.lift > 0 %}#3fb950{% else %}#f85149{% endif %};">{{ g.contingency.lift if g.contingency.lift is not none else '—' }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+  </div>
+  {% endif %}
+
   {% if r.out_of_window %}
   <div class="card" style="border-left:3px solid #58a6ff;">
     <div class="card-title">창 밖에서도 통하는가
