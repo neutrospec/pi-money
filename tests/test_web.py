@@ -35,6 +35,14 @@ UI_EXEMPT = {
                    "endpoint exists because agents read the layer cards too",
     "/api/backtest": "the /backtest page renders this payload server-side; the "
                      "endpoint exists because agents read the verification too",
+    "/api/portfolio/account": "write endpoint, called by the form JS on "
+                              "/portfolio and gated to local requests",
+    "/api/portfolio/holdings": "write endpoint, called by the form JS on "
+                               "/portfolio and gated to local requests",
+    "/api/portfolio/flow": "write endpoint, called by the form JS on "
+                           "/portfolio and gated to local requests",
+    "/api/portfolio/tag": "write endpoint, called by the form JS on "
+                          "/portfolio and gated to local requests",
     "/api/replay": "agent-facing point-in-time replay; the ledger is still "
                    "too thin for a screen and /data reports when that changes",
     "/api/replay/leak": "agent-facing leak measurement over the same replay",

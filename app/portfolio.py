@@ -274,13 +274,23 @@ def add_account(label: str, institution: str, account_type: str, *,
         return cursor.lastrowid
 
 
+def _parse_rows(text: str) -> list[dict]:
+    """CSV text to normalised dicts. One parser for the CLI and the browser.
+
+    Splitting these would let the two entry paths disagree about what an empty
+    ``is_risky_asset`` means, and that difference is exactly the one the DC
+    limit depends on.
+    """
+    return [
+        {key.strip(): (value or "").strip()
+         for key, value in row.items() if key}
+        for row in csv.DictReader(text.lstrip("\ufeff").splitlines())
+    ]
+
+
 def _read_rows(path: str) -> list[dict]:
     with open(path, encoding="utf-8-sig", newline="") as handle:
-        return [
-            {key.strip(): (value or "").strip()
-             for key, value in row.items() if key}
-            for row in csv.DictReader(handle)
-        ]
+        return _parse_rows(handle.read())
 
 
 def _flag(value: str) -> int | None:
@@ -295,13 +305,28 @@ def _flag(value: str) -> int | None:
 
 def import_snapshot(account_id: int, as_of: str, path: str, *,
                     dry_run: bool = False) -> dict:
+    """Replace this account's snapshot for ``as_of`` from a CSV file."""
+    return import_rows(account_id, as_of, _read_text(path), dry_run=dry_run)
+
+
+def _read_text(path: str) -> str:
+    with open(path, encoding="utf-8-sig") as handle:
+        return handle.read()
+
+
+def import_rows(account_id: int, as_of: str, text: str, *,
+                dry_run: bool = False) -> dict:
     """Replace this account's snapshot for ``as_of`` entirely.
 
     Full replacement rather than merge, because a partial import is how a sold
     position stays on the books forever. Destructive by design, so ``dry_run``
-    prints what would go and what would arrive before anything is written.
+    reports what would go and what would arrive before anything is written —
+    the browser surfaces that as a preview step rather than an option.
     """
-    rows = _read_rows(path)
+    date.fromisoformat(as_of)   # reject a malformed date here, not in SQL
+    rows = _parse_rows(text)
+    if not rows:
+        raise ValueError("적재할 행이 없습니다 — 머리글과 최소 한 줄이 필요합니다")
     parsed = []
     for row in rows:
         parsed.append({

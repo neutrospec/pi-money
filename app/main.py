@@ -9,7 +9,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -17,10 +17,10 @@ from fastapi.templating import Jinja2Templates
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 from app import (
-    analysis, backtest, brief as brief_module, correlation, coverage,
-    dashboard, db,
-    explain, history_recovery, layers as layers_module, market_metrics, pit,
-    normalize, portfolio, registry, sentiment,
+    accounts, analysis, backtest, brief as brief_module, correlation,
+    coverage, dashboard, db, explain, history_recovery,
+    layers as layers_module, market_metrics, normalize, pit, portfolio,
+    registry, sentiment, webwrite,
     spillover,
 )
 from app.collectors import indices, indicators, krx, watchlist
@@ -151,16 +151,93 @@ def api_backtest(market: str = "korea"):
 
 @app.get("/portfolio", response_class=HTMLResponse)
 def portfolio_page(request: Request):
-    """Read-only, like every other screen. Writes go through the CLI.
+    """The only screen with a write path, and it is gated four ways.
 
-    There is no POST path here and no agent write tool: the repository is
-    public, and an asset picture that reaches an external model cannot be
-    recalled. See docs/plan/portfolio.md §4.6.
+    Entry moved here from the CLI on 2026-08-30 because typing snapshots by
+    hand proved to be real friction — the condition the portfolio design set
+    for opening this. Every write goes through ``webwrite.require_local_write``
+    and reuses the same functions the CLI calls, so there is one code path
+    rather than two that can disagree. Agents still have no write tool.
     """
     return templates.TemplateResponse(
         request, "portfolio.html",
-        {"p": portfolio.overview(), "active": "portfolio"},
+        {
+            "p": portfolio.overview(),
+            "types": accounts.ACCOUNT_TYPES,
+            "tags": accounts.EXPOSURE_TAGS,
+            "kinds": accounts.CASHFLOW_KINDS,
+            # Rendered into the page and required back as a header. A
+            # cross-origin request cannot set it without a preflight.
+            "write_token": webwrite.token(),
+            "token_header": webwrite.TOKEN_HEADER,
+            "active": "portfolio",
+        },
     )
+
+
+@app.post("/api/portfolio/account", dependencies=[Depends(webwrite.require_local_write)])
+def api_add_account(body: dict = Body(...)):
+    try:
+        new_id = portfolio.add_account(
+            body["label"], body["institution"], body["account_type"],
+            opened_on=body.get("opened_on") or None,
+            tax_opened_on=body.get("tax_opened_on") or None,
+            currency=body.get("currency") or "KRW",
+            note=body.get("note") or None,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=400, detail=f"빠진 항목: {exc}") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"id": new_id, "label": body["label"]}
+
+
+@app.post("/api/portfolio/holdings", dependencies=[Depends(webwrite.require_local_write)])
+def api_import_holdings(body: dict = Body(...)):
+    """Replace one account's snapshot for one date, from pasted CSV.
+
+    ``preview`` runs the same replacement without writing, so the destructive
+    half of a full replace is always visible before it happens.
+    """
+    try:
+        return portfolio.import_rows(
+            int(body["account_id"]), body["as_of"], body["csv"],
+            dry_run=bool(body.get("preview")),
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=400, detail=f"빠진 항목: {exc}") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/portfolio/flow", dependencies=[Depends(webwrite.require_local_write)])
+def api_record_flow(body: dict = Body(...)):
+    try:
+        portfolio.record_flow(
+            int(body["account_id"]), body["date"], body["kind"],
+            float(body["amount"]), currency=body.get("currency") or "KRW",
+            note=body.get("note") or None,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=400, detail=f"빠진 항목: {exc}") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True}
+
+
+@app.post("/api/portfolio/tag", dependencies=[Depends(webwrite.require_local_write)])
+def api_tag_instrument(body: dict = Body(...)):
+    try:
+        portfolio.tag_instrument(
+            body["source"], body["dataset"], body["symbol"], body["tag"],
+            weight=float(body.get("weight") or 1.0),
+            note=body.get("note") or None,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=400, detail=f"빠진 항목: {exc}") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True}
 
 
 @app.get("/api/replay/readiness")

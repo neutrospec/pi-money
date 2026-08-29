@@ -9,25 +9,15 @@
   {% if p.empty %}
   <div class="card">
     <div class="card-title">아직 등록된 계좌가 없습니다</div>
-    <div style="font-size:13px;color:#c9d1d9;line-height:1.8;">
-      <p>계좌와 보유 종목은 <b>CLI로만</b> 입력합니다. 웹에는 쓰기 경로가 없고
-         에이전트에도 쓰기 도구가 없습니다 — 이 저장소는 public이고, 자산 구성이
-         한 번 외부로 나가면 회수할 수 없기 때문입니다.
-         <b>계좌번호는 아예 저장하지 않습니다.</b></p>
-      <div class="scroll"><table>
-        <thead><tr><th>할 일</th><th>명령</th></tr></thead>
-        <tbody>
-          <tr><td>계좌 추가</td><td><code>python -m app.portfolio add-account --label "이름" --institution "기관" --type isa</code></td></tr>
-          <tr><td>보유 적재</td><td><code>python -m app.portfolio import --account 1 --as-of 2026-08-30 --file 보유.csv --dry-run</code></td></tr>
-          <tr><td>입출금</td><td><code>python -m app.portfolio flow --account 1 --date 2026-08-30 --kind deposit --amount 1000000</code></td></tr>
-          <tr><td>노출 태그</td><td><code>python -m app.portfolio tag --source krx --dataset etf_bydd_trd --symbol 069500 --tag kr_equity</code></td></tr>
-        </tbody>
-      </table></div>
-      <p style="margin-top:12px;">CSV 열: <code>source,dataset,symbol,name,quantity,book_amount,stated_value,currency,is_risky_asset,note</code>.
-         <code>is_risky_asset</code>을 비워두면 <b>미상</b>으로 남고, 그건 안전으로 세지 않습니다.</p>
+    <div style="font-size:13px;color:#c9d1d9;line-height:1.7;">
+      아래에서 계좌를 추가하면 시작됩니다. 입력은 <b>이 컴퓨터에서만</b> 받습니다 —
+      다른 기기나 외부 페이지에서 온 요청은 거부합니다.
+      <b>계좌번호는 아예 저장하지 않습니다</b>, 에이전트에도 쓰기 도구가 없습니다.
     </div>
   </div>
-  {% else %}
+  {% endif %}
+
+  {% if not p.empty %}
 
   {% for a in p.accounts %}
   <div class="card">
@@ -113,6 +103,132 @@
   </div>
   {% endfor %}
   {% endif %}
+
+  <div class="card">
+    <div class="card-title">입력</div>
+    <div id="msg" style="font-size:13px;margin-bottom:12px;"></div>
+
+    <details class="learn" {% if p.empty %}open{% endif %}><summary>계좌 추가</summary>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin:10px 0;">
+        <label>이름<input id="acLabel" placeholder="예: 연금저축(주력)"></label>
+        <label>기관<input id="acInst" placeholder="예: OO증권"></label>
+        <label>유형<select id="acType">
+          {% for key, name in types.items() %}<option value="{{ key }}">{{ name }}</option>{% endfor %}
+        </select></label>
+        <label>개설일<input id="acOpened" placeholder="2020-01-02"></label>
+        <label>세법상 가입일<input id="acTax" placeholder="계약이전 시 승계된 날"></label>
+        <label>통화<input id="acCur" value="KRW"></label>
+      </div>
+      <button onclick="addAccount()">추가</button>
+      <div style="font-size:11px;color:#6e7681;margin-top:8px;">계좌번호 입력란은 없습니다. 저장하지 않기 때문입니다.</div>
+    </details>
+
+    <details class="learn"><summary>보유 스냅샷 붙여넣기</summary>
+      <div style="display:flex;flex-wrap:wrap;gap:10px;margin:10px 0;">
+        <label>계좌<select id="hAccount">
+          {% for a in p.accounts %}<option value="{{ a.id }}">{{ a.label }}</option>{% endfor %}
+        </select></label>
+        <label>기준일<input id="hAsOf" placeholder="{{ p.as_of }}" value="{{ p.as_of }}"></label>
+      </div>
+      <textarea id="hCsv" rows="8" style="width:100%;font-family:monospace;font-size:12px;"
+        placeholder="source,dataset,symbol,name,quantity,book_amount,stated_value,currency,is_risky_asset,note
+krx,etf_bydd_trd,069500,KODEX 200,10,,,KRW,1,
+,,예금,수시입출금,,,3000000,KRW,0,"></textarea>
+      <div style="margin-top:8px;">
+        <button onclick="importHoldings(true)">미리보기</button>
+        <button onclick="importHoldings(false)">적재</button>
+      </div>
+      <div style="font-size:11px;color:#d29922;margin-top:8px;">
+        같은 (계좌, 기준일)은 <b>전량 교체</b>됩니다 — 남기고 싶은 종목도 전부 포함하세요.
+        <code>is_risky_asset</code>을 비워두면 <b>미상</b>으로 남고, 미상은 안전으로 세지 않습니다.
+      </div>
+    </details>
+
+    <details class="learn"><summary>입출금</summary>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:10px 0;">
+        <label>계좌<select id="fAccount">
+          {% for a in p.accounts %}<option value="{{ a.id }}">{{ a.label }}</option>{% endfor %}
+        </select></label>
+        <label>날짜<input id="fDate" value="{{ p.as_of }}"></label>
+        <label>종류<select id="fKind">
+          {% for key, name in kinds.items() %}<option value="{{ key }}">{{ name }}</option>{% endfor %}
+        </select></label>
+        <label>금액<input id="fAmount" placeholder="1000000"></label>
+      </div>
+      <button onclick="addFlow()">기록</button>
+      <div style="font-size:11px;color:#6e7681;margin-top:8px;">
+        이전 입금은 일반 입금과 따로 셉니다 — ISA 만기자금의 연금계좌 전환은 납입한도에 들어가지 않습니다.
+      </div>
+    </details>
+
+    <details class="learn"><summary>노출 태그</summary>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:10px 0;">
+        <label>source<input id="tSource" value="krx"></label>
+        <label>dataset<input id="tDataset" placeholder="etf_bydd_trd"></label>
+        <label>symbol<input id="tSymbol" placeholder="069500"></label>
+        <label>태그<select id="tTag">
+          {% for key, name in tags.items() %}<option value="{{ key }}">{{ name }}</option>{% endfor %}
+        </select></label>
+      </div>
+      <button onclick="addTag()">저장</button>
+    </details>
+  </div>
+
+  <script>
+  const TOKEN = {{ write_token | tojson }};
+  const HEADER = {{ token_header | tojson }};
+  function say(text, bad) {
+    const el = document.getElementById('msg');
+    el.textContent = text;
+    el.style.color = bad ? '#f85149' : '#3fb950';
+  }
+  async function send(path, body) {
+    const r = await fetch(path, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', [HEADER]: TOKEN},
+      body: JSON.stringify(body),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) { say(data.detail || ('오류 ' + r.status), true); return null; }
+    return data;
+  }
+  function val(id) { return document.getElementById(id).value.trim(); }
+  async function addAccount() {
+    const d = await send('/api/portfolio/account', {
+      label: val('acLabel'), institution: val('acInst'),
+      account_type: val('acType'), opened_on: val('acOpened'),
+      tax_opened_on: val('acTax'), currency: val('acCur'),
+    });
+    if (d) { say('계좌 ' + d.id + ' 추가됨'); setTimeout(() => location.reload(), 600); }
+  }
+  async function importHoldings(preview) {
+    const d = await send('/api/portfolio/holdings', {
+      account_id: val('hAccount'), as_of: val('hAsOf'),
+      csv: document.getElementById('hCsv').value, preview: preview,
+    });
+    if (!d) return;
+    if (preview) {
+      say('미리보기: 기존 ' + d.would_remove + '행 삭제 → ' + d.would_add + '행 적재');
+    } else {
+      say(d.removed + '행 교체 → ' + d.added + '행');
+      setTimeout(() => location.reload(), 600);
+    }
+  }
+  async function addFlow() {
+    const d = await send('/api/portfolio/flow', {
+      account_id: val('fAccount'), date: val('fDate'),
+      kind: val('fKind'), amount: val('fAmount'),
+    });
+    if (d) say('기록됨');
+  }
+  async function addTag() {
+    const d = await send('/api/portfolio/tag', {
+      source: val('tSource'), dataset: val('tDataset'),
+      symbol: val('tSymbol'), tag: val('tTag'),
+    });
+    if (d) say('태그 저장됨');
+  }
+  </script>
 
   <div class="card" style="border-left:3px solid #6e7681;">
     <div style="font-size:12px;color:#8b949e;line-height:1.8;">{{ p.warning }}</div>

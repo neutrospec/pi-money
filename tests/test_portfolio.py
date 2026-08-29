@@ -261,6 +261,132 @@ class ImportTests(TemporaryDatabaseTest):
             portfolio.holdings(account, today=date(2026, 8, 30))[0]["is_risky_asset"])
 
 
+class WriteGateTests(TemporaryDatabaseTest):
+    """A browser will POST to localhost for any page the owner is visiting."""
+
+    def client(self, **kwargs):
+        from fastapi.testclient import TestClient
+        from app import main
+
+        # TestClient defaults to client "testclient" and Host "testserver",
+        # which the gate correctly refuses — so a local request has to be
+        # constructed deliberately.
+        return TestClient(main.app, client=("127.0.0.1", 1234),
+                          base_url="http://127.0.0.1:8077", **kwargs)
+
+    def headers(self, **overrides):
+        from app import webwrite
+
+        base = {"Content-Type": "application/json",
+                webwrite.TOKEN_HEADER: webwrite.token()}
+        base.update(overrides)
+        return base
+
+    def body(self):
+        return {"label": "테스트", "institution": "테스트 증권",
+                "account_type": "general"}
+
+    def test_the_happy_path_writes(self):
+        response = self.client().post("/api/portfolio/account",
+                                      json=self.body(), headers=self.headers())
+        self.assertEqual(200, response.status_code, response.text)
+        self.assertEqual(1, len(portfolio.account_list()))
+
+    def test_a_request_without_the_token_is_refused(self):
+        from app import webwrite
+
+        response = self.client().post(
+            "/api/portfolio/account", json=self.body(),
+            headers={"Content-Type": "application/json"})
+        self.assertEqual(403, response.status_code)
+        self.assertEqual([], portfolio.account_list())
+
+    def test_a_request_with_the_wrong_token_is_refused(self):
+        from app import webwrite
+
+        response = self.client().post(
+            "/api/portfolio/account", json=self.body(),
+            headers=self.headers(**{webwrite.TOKEN_HEADER: "guessed"}))
+        self.assertEqual(403, response.status_code)
+
+    def test_a_form_content_type_is_refused_before_the_token_matters(self):
+        # HTML forms can only send urlencoded, multipart or text/plain, and
+        # those are exactly the request kinds that cross origins without a
+        # preflight. Requiring JSON removes the whole class.
+        response = self.client().post(
+            "/api/portfolio/account", data="label=x",
+            headers=self.headers(**{"Content-Type": "application/x-www-form-urlencoded"}))
+        self.assertEqual(415, response.status_code)
+
+    def test_a_non_local_client_address_is_refused(self):
+        # The server binds 127.0.0.1 today, but a binding is a launch argument.
+        # This is a property of the request, so it still holds the day someone
+        # runs it on 0.0.0.0 or behind a proxy.
+        from fastapi.testclient import TestClient
+        from app import main
+
+        remote = TestClient(main.app, client=("203.0.113.9", 4321),
+                            base_url="http://127.0.0.1:8077")
+        response = remote.post("/api/portfolio/account", json=self.body(),
+                               headers=self.headers())
+        self.assertEqual(403, response.status_code)
+        self.assertIn("이 컴퓨터에서만", response.json()["detail"])
+        self.assertEqual([], portfolio.account_list())
+
+    def test_a_non_local_host_header_is_refused(self):
+        # DNS rebinding: the attacker's domain resolves to 127.0.0.1, so the
+        # client address looks local and only the Host header gives it away.
+        response = self.client().post(
+            "/api/portfolio/account", json=self.body(),
+            headers=self.headers(Host="evil.example"))
+        self.assertEqual(403, response.status_code)
+
+    def test_the_host_check_ignores_the_port(self):
+        from app import webwrite
+
+        for host in ("127.0.0.1:9999", "localhost:1", "[::1]:8077", "localhost"):
+            self.assertIn(webwrite._host_of(host), webwrite.LOCAL_HOSTS, host)
+        self.assertNotIn(webwrite._host_of("evil.example:8077"), webwrite.LOCAL_HOSTS)
+
+    def test_the_token_survives_a_restart(self):
+        from app import webwrite
+
+        first = webwrite.token()
+        self.assertEqual(first, webwrite.token())
+        self.assertEqual(first, db.get_meta(webwrite.TOKEN_KEY))
+
+    def test_an_empty_paste_is_refused_rather_than_wiping_the_snapshot(self):
+        account = portfolio.add_account("테스트", "테스트 증권", "general")
+        portfolio.import_rows(account, "2026-08-30",
+                              "source,dataset,symbol,name,stated_value\n,,A,합성,1000")
+        with self.assertRaises(ValueError):
+            portfolio.import_rows(account, "2026-08-30", "")
+        self.assertEqual(1, len(portfolio.holdings(account, today=date(2026, 8, 30))))
+
+    def test_an_empty_risk_flag_stays_unknown_through_the_web_path(self):
+        account = portfolio.add_account("테스트", "테스트 증권", "retirement_dc")
+        response = self.client().post("/api/portfolio/holdings", headers=self.headers(),
+            json={"account_id": account, "as_of": "2026-08-30",
+                  "csv": "source,dataset,symbol,name,stated_value,is_risky_asset\n"
+                         ",,A,합성 A,1000,"})
+        self.assertEqual(200, response.status_code, response.text)
+        self.assertIsNone(
+            portfolio.holdings(account, today=date(2026, 8, 30))[0]["is_risky_asset"])
+
+    def test_a_preview_reports_the_replacement_without_writing(self):
+        account = portfolio.add_account("테스트", "테스트 증권", "general")
+        portfolio.import_rows(account, "2026-08-30",
+                              "source,dataset,symbol,name,stated_value\n,,A,합성,1000")
+        response = self.client().post("/api/portfolio/holdings", headers=self.headers(),
+            json={"account_id": account, "as_of": "2026-08-30", "preview": True,
+                  "csv": "source,dataset,symbol,name,stated_value\n,,B,합성 B,2000"})
+        self.assertEqual(200, response.status_code)
+        self.assertEqual((1, 1), (response.json()["would_remove"],
+                                  response.json()["would_add"]))
+        self.assertEqual(["A"], [item["symbol"] for item in
+                                 portfolio.holdings(account, today=date(2026, 8, 30))])
+
+
 class WriteSurfaceTests(TemporaryDatabaseTest):
     """The repository is public and an asset picture cannot be recalled."""
 
@@ -270,15 +396,34 @@ class WriteSurfaceTests(TemporaryDatabaseTest):
         for banned in ("account_number", "account_no", "number", "iban"):
             self.assertNotIn(banned, columns)
 
-    def test_the_web_layer_offers_no_write_path_for_assets(self):
+    def test_every_asset_write_route_sits_behind_the_local_write_gate(self):
+        # This test used to assert that no write route existed at all. Entry
+        # moved to the browser on 2026-08-30 under the condition the design
+        # set, so the assertion changed shape rather than being deleted: what
+        # must hold now is that no write route can be reached without the gate.
+        from app import main, webwrite
+
+        writes = [
+            route for route in main.app.routes
+            if "portfolio" in getattr(route, "path", "")
+            and {"POST", "PUT", "PATCH", "DELETE"} & set(getattr(route, "methods", []) or [])
+        ]
+        self.assertTrue(writes, "쓰기 라우트를 찾지 못했습니다")
+        for route in writes:
+            guards = [
+                dependency.call
+                for dependency in route.dependant.dependencies
+            ]
+            self.assertIn(webwrite.require_local_write, guards, route.path)
+
+    def test_no_delete_route_exists_for_assets(self):
+        # Deferred deliberately: a full-replace import is recoverable by
+        # re-importing, but a deleted account is not, and nobody asked for it.
         from app import main
 
         for route in main.app.routes:
-            path = getattr(route, "path", "")
-            if "portfolio" in path or "account" in path:
-                self.assertEqual({"GET", "HEAD"},
-                                 set(getattr(route, "methods", []) or {"GET"}) & {"POST", "PUT", "DELETE", "PATCH"} or {"GET", "HEAD"},
-                                 path)
+            if "portfolio" in getattr(route, "path", ""):
+                self.assertNotIn("DELETE", set(getattr(route, "methods", []) or []))
 
     def test_an_unknown_account_type_is_refused_rather_than_stored(self):
         with self.assertRaises(ValueError):
