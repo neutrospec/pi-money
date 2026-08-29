@@ -66,6 +66,14 @@ KRX_INDEX_FROM = "2010-01-01"
 
 DEEP_YEARS = 20
 
+# How much overlap disagreement means "this is a different series" rather than
+# "this series was revised". The distinction matters because the two need
+# opposite handling: a different series must never be written, and a revision
+# is exactly what `save_indicator_points` records as a vintage. Refusing on any
+# disagreement gets first contact right and everything after it wrong — one
+# revised basis point would block a five-thousand-point refetch forever.
+CLASH_SHARE_LIMIT = 0.05
+
 
 def deepen_ecos(key: str, *, years: int = DEEP_YEARS) -> dict:
     """Refetch one ECOS series over its full available history.
@@ -73,7 +81,15 @@ def deepen_ecos(key: str, *, years: int = DEEP_YEARS) -> dict:
     Values that already exist are written back unchanged, so this is an
     extension rather than a replacement — and because ``save_indicator_points``
     only records a vintage when a value *differs*, an unchanged value costs
-    nothing in the ledger.
+    nothing in the ledger and a changed one is recorded as a revision.
+
+    That last part is why the disagreement guard is a share and not a count. A
+    handful of differing overlap dates is a revision, which is the thing the
+    vintage ledger exists to capture; refusing on any disagreement would make
+    the second call to this function block on the first real revision and never
+    write again. Wholesale disagreement means something else entirely — a
+    different item code returning plausible numbers — and that must never be
+    written over a live series.
     """
     series = ECOS_DEEP.get(key)
     if not series:
@@ -86,20 +102,23 @@ def deepen_ecos(key: str, *, years: int = DEEP_YEARS) -> dict:
     # series, not a deeper one. Refuse rather than overwrite.
     held = {item["date"]: item["value"] for item in before}
     fetched = {item["date"]: item["value"] for item in points}
-    clashes = [
-        day for day in held.keys() & fetched.keys()
-        if abs(held[day] - fetched[day]) > 1e-9
-    ]
-    if clashes:
+    overlap = held.keys() & fetched.keys()
+    clashes = [day for day in overlap if abs(held[day] - fetched[day]) > 1e-9]
+    share = len(clashes) / len(overlap) if overlap else 0.0
+    if share > CLASH_SHARE_LIMIT:
         return {"key": key, "added": 0, "clashes": len(clashes),
-                "reason": f"겹치는 {len(clashes)}일의 값이 다릅니다 — 같은 계열이 "
-                          f"아닐 수 있어 쓰지 않았습니다"}
+                "overlap": len(overlap),
+                "reason": f"겹치는 {len(overlap)}일 중 {len(clashes)}일의 값이 "
+                          f"다릅니다 ({share:.0%}) — 같은 계열이 아닐 수 있어 "
+                          f"쓰지 않았습니다"}
     db.save_indicator_points(key, points, source="ecos_raw")
     after = db.get_indicator_points(key)
     return {
         "key": key,
         "before": len(before), "after": len(after),
         "added": len(after) - len(before),
+        # Overlap dates whose value changed: revisions, now in the ledger.
+        "revisions": len(clashes),
         "earliest": after[0]["date"] if after else None,
     }
 

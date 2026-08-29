@@ -39,10 +39,39 @@ class EcosDeepeningTests(TemporaryDatabaseTest):
         self.assertEqual((1, 2, 1), (result["before"], result["after"], result["added"]))
         self.assertEqual("2010-01-04", result["earliest"])
 
-    def test_a_disagreement_on_an_overlapping_date_refuses_the_write(self):
-        # Same dates, different values means a different series — a deeper
-        # feed for the same thing must agree where they overlap. Overwriting
-        # here would silently swap the series under every screen that reads it.
+    def test_a_single_revision_does_not_block_the_whole_refetch(self):
+        # The guard's job is to catch a different series, not to veto a
+        # revision. Refusing on any disagreement gets first contact right and
+        # every later call wrong: one revised basis point would block a
+        # five-thousand-point refetch forever, and the revision is precisely
+        # what the vintage ledger exists to record.
+        db.save_indicator_points("kr_cd_91d", [
+            {"date": f"2026-01-{day:02d}", "value": 3.5} for day in range(1, 21)
+        ])
+        deep = [{"date": "2010-01-04", "value": 2.8}] + [
+            {"date": f"2026-01-{day:02d}", "value": 3.51 if day == 7 else 3.5}
+            for day in range(1, 21)
+        ]
+        with patch("app.collectors.indicators.ecos_raw_series", return_value=deep):
+            result = history_backfill.deepen_ecos("kr_cd_91d")
+        self.assertEqual(1, result["added"])
+        self.assertEqual(1, result["revisions"])
+        self.assertEqual(
+            3.51,
+            {p["date"]: p["value"]
+             for p in db.get_indicator_points("kr_cd_91d")}["2026-01-07"],
+        )
+        with db.get_conn() as conn:
+            vintages = conn.execute(
+                "SELECT COUNT(*) FROM indicator_vintages "
+                "WHERE indicator='kr_cd_91d' AND date='2026-01-07'"
+            ).fetchone()[0]
+        self.assertGreaterEqual(vintages, 1, "the revision was not recorded")
+
+    def test_wholesale_disagreement_refuses_the_write(self):
+        # Every overlapping date disagreeing means a different series, not a
+        # revised one. Overwriting would silently swap the series under every
+        # screen that reads it.
         db.save_indicator_points("kr_cd_91d", [{"date": "2026-01-02", "value": 3.5}])
         wrong = [{"date": "2010-01-04", "value": 2.8},
                  {"date": "2026-01-02", "value": 9.9}]
