@@ -206,7 +206,7 @@ class IndicatorTests(unittest.TestCase):
 
     def test_catalog_is_well_formed(self):
         catalog = indicators.catalog()
-        self.assertEqual(168, len(catalog))
+        self.assertEqual(175, len(catalog))
         for key, spec in catalog.items():
             self.assertTrue(key)
             self.assertIn(
@@ -272,14 +272,25 @@ class KrxTests(unittest.TestCase):
         self.assertNotIn("eqsop_bydd_trd", datasets)
         self.assertEqual(31, len(krx.dataset_specs("all")))
 
-    def test_aggregation_tags_name_a_known_summariser(self):
-        tagged = {
-            item["dataset"]: item["aggregate"]
-            for item in krx.DATASETS if item.get("aggregate")
-        }
-        self.assertEqual(
-            {"opt_bydd_trd": "put_call", "drvprod_dd_trd": "named_index"}, tagged
-        )
+    def test_every_aggregation_tag_has_a_summariser_and_a_key_set(self):
+        """A tag with no handler stores rows and silently no series.
+
+        Asserted as an invariant rather than a snapshot: a new tag should
+        fail here for being unwired, not for being new.
+        """
+        tagged = [item for item in krx.DATASETS if item.get("aggregate")]
+        self.assertTrue(tagged)
+        for spec in tagged:
+            with self.subTest(dataset=spec["dataset"]):
+                keys = krx.aggregate_indicator_keys(spec)
+                self.assertTrue(keys, "선언된 산출 키가 없습니다")
+                # The audit compares stored days against these keys, so an
+                # empty payload must be handled without raising.
+                self.assertEqual([], krx.derive_aggregate_points(spec, [], "2026-08-25"))
+                catalog = indicators.catalog()
+                for key in keys:
+                    self.assertIn(key, catalog, f"{key}가 카탈로그에 없습니다")
+                    self.assertTrue(indicators.is_collector_fed(key))
 
     def test_vkospi_is_lifted_out_of_the_bulk_index_table(self):
         # It arrives as one row among 320 derivative indices; a consumer must
@@ -377,6 +388,146 @@ class KrxTests(unittest.TestCase):
             ["2026-08-19", "2026-08-20", "2026-08-21"],
             krx.catchup_dates(3, today=date(2026, 8, 24)),
         )
+
+
+class DerivedSeriesTests(TemporaryDatabaseTest):
+    """Series the exchange's tables imply but never print."""
+
+    def test_breakeven_needs_both_legs_at_the_same_maturity(self):
+        """A nearby maturity subtracted is a different number, not a breakeven.
+
+        The benchmark linker and the benchmark nominal do not always mature in
+        the same month — for 167 of the stored days the linker matured 2034-06
+        and no bond at that maturity was quoted at all.
+        """
+        paired = [
+            {"GOVBND_ISU_TP_NM": "지표", "BND_EXP_TP_NM": "10",
+             "ISU_NM": "국고04250-3606(26-6)", "CLSPRC_YD": "4.322"},
+            {"GOVBND_ISU_TP_NM": "지표", "BND_EXP_TP_NM": "10",
+             "ISU_NM": "물가01125-3606(26-4)", "CLSPRC_YD": "1.720"},
+        ]
+        unpaired = [
+            {"GOVBND_ISU_TP_NM": "지표", "BND_EXP_TP_NM": "10",
+             "ISU_NM": "국고02625-3506(25-5)", "CLSPRC_YD": "2.812"},
+            {"GOVBND_ISU_TP_NM": "지표", "BND_EXP_TP_NM": "10",
+             "ISU_NM": "물가00750-3406(24-6)", "CLSPRC_YD": "0.482"},
+        ]
+        got = krx.aggregate_govbond(paired, "2026-08-25")
+        self.assertEqual(
+            [{"indicator": "kr_breakeven_10y", "date": "2026-08-25", "value": 2.602}],
+            got,
+        )
+        self.assertEqual([], krx.aggregate_govbond(unpaired, "2025-09-12"))
+
+    def test_govbond_reads_only_the_on_the_run_issue(self):
+        """The table's maturity field is the bond's original maturity.
+
+        An off-the-run ten-year with one year left still says 10, so mixing
+        them produces a curve point that never existed.
+        """
+        rows = [
+            {"GOVBND_ISU_TP_NM": "지표", "BND_EXP_TP_NM": "20",
+             "ISU_NM": "국고02750-4509(25-9)", "CLSPRC_YD": "4.579"},
+            {"GOVBND_ISU_TP_NM": "경과", "BND_EXP_TP_NM": "20",
+             "ISU_NM": "국고03000-2712(07-1)", "CLSPRC_YD": "2.100"},
+        ]
+        self.assertEqual(
+            [{"indicator": "kr_treasury_20y", "date": "2026-08-25", "value": 4.579}],
+            krx.aggregate_govbond(rows, "2026-08-25"),
+        )
+
+    def test_basis_uses_the_month_holding_the_open_interest(self):
+        """Through a rollover the expiring month still sorts first."""
+        rows = [
+            {"PROD_NM": "코스피200 선물", "ISU_NM": "코스피200 F 202609 (주간)",
+             "TDD_CLSPRC": "1000.0", "SPOT_PRC": "1000.0", "ACC_OPNINT_QTY": "500"},
+            {"PROD_NM": "코스피200 선물", "ISU_NM": "코스피200 F 202612 (주간)",
+             "TDD_CLSPRC": "1010.0", "SPOT_PRC": "1000.0", "ACC_OPNINT_QTY": "150000"},
+            {"PROD_NM": "코스피200 선물", "ISU_NM": "코스피200 F 202609 (야간)",
+             "TDD_CLSPRC": "1000.0", "SPOT_PRC": "1000.0", "ACC_OPNINT_QTY": "9999"},
+        ]
+        points = {p["indicator"]: p["value"] for p in krx.aggregate_futures(rows, "2026-08-25")}
+        self.assertEqual(1.0, points["kr_kospi200_basis"])       # 뒤 월물 기준
+        self.assertEqual(150500.0, points["kr_kospi200_futures_oi"])  # 야간 제외
+
+    def test_etf_discount_is_stored_so_that_a_rise_is_stress(self):
+        # 200 traded names, the worst 20 at a 5% discount, so the 5th
+        # percentile sits inside the discounted tail rather than on its edge.
+        rows = [
+            {"TDD_CLSPRC": "100", "NAV": "100", "ACC_TRDVOL": "10"}
+            for _ in range(180)
+        ] + [
+            {"TDD_CLSPRC": "95", "NAV": "100", "ACC_TRDVOL": "10"} for _ in range(20)
+        ] + [
+            # 당일 거래가 없던 종목: 멈춘 호가는 아무도 거래할 수 없던 괴리입니다.
+            {"TDD_CLSPRC": "1", "NAV": "100", "ACC_TRDVOL": "0"} for _ in range(20)
+        ]
+        points = krx.aggregate_etp(rows, "2026-08-25")
+        self.assertEqual(1, len(points))
+        self.assertGreater(points[0]["value"], 0)     # 할인은 양수 = 스트레스
+        self.assertLess(points[0]["value"], 6)        # 무거래 −99%가 꼬리를 잡지 않음
+        self.assertEqual(
+            indicators.RISK, indicators.risk_direction("kr_etf_discount")
+        )
+
+    def test_gold_matches_the_bar_name_case_insensitively(self):
+        """The provider wrote both "1Kg" and "1kg" for the same bar."""
+        for name in ("금 99.99_1Kg", "금 99.99_1kg"):
+            with self.subTest(name=name):
+                self.assertEqual(
+                    [{"indicator": "kr_gold_price", "date": "2026-08-25",
+                      "value": 208300.0}],
+                    krx.aggregate_gold(
+                        [{"ISU_NM": name, "TDD_CLSPRC": "208300"}], "2026-08-25"
+                    ),
+                )
+
+
+class ProvisionalEmptyTests(TemporaryDatabaseTest):
+    """An empty answer is not proof of a holiday until publication is due."""
+
+    def test_a_recent_empty_day_is_retried_and_an_old_one_is_not(self):
+        today = date(2026, 8, 29)
+        self.assertFalse(krx.empty_is_final("2026-08-28", today))
+        self.assertFalse(krx.empty_is_final("2026-08-26", today))
+        self.assertTrue(krx.empty_is_final("2026-08-15", today))
+
+    def test_collection_reasks_a_day_the_exchange_had_not_published(self):
+        """The bug this guards: three trading days were retired unpublished.
+
+        The collector asked before KRX published, recorded the empty answer,
+        and every layer then skipped the day for good. KRX-derived series
+        stopped days behind while every status read healthy.
+        """
+        db.init_db()
+        spec = next(item for item in krx.DATASETS if item["dataset"] == "stk_bydd_trd")
+        day = krx.catchup_dates(1)[0]          # yesterday: publication may lag
+        db.save_market_batch("krx", spec["dataset"], day, [])
+        self.assertEqual("empty", db.market_run_status("krx", spec["dataset"], day))
+
+        row = {"ISU_CD": "005930", "ISU_NM": "삼성전자", "TDD_CLSPRC": "70000"}
+        with patch("app.registry.krx.enabled", return_value=True), \
+             patch("app.registry.krx.dataset_specs", return_value=[spec]), \
+             patch("app.registry.krx.catchup_dates", return_value=[day]), \
+             patch("app.registry.krx.fetch_dataset", return_value=[row]) as fetch:
+            self.assertFalse(registry._krx_market_fresh())
+            registry._run_krx_market()
+
+        fetch.assert_called_once()
+        self.assertEqual("success", db.market_run_status("krx", spec["dataset"], day))
+
+    def test_a_settled_empty_day_is_left_alone(self):
+        db.init_db()
+        spec = next(item for item in krx.DATASETS if item["dataset"] == "stk_bydd_trd")
+        old_day = "2026-01-01"
+        db.save_market_batch("krx", spec["dataset"], old_day, [])
+        with patch("app.registry.krx.enabled", return_value=True), \
+             patch("app.registry.krx.dataset_specs", return_value=[spec]), \
+             patch("app.registry.krx.catchup_dates", return_value=[old_day]), \
+             patch("app.registry.krx.fetch_dataset") as fetch:
+            self.assertTrue(registry._krx_market_fresh())
+            registry._run_krx_market()
+        fetch.assert_not_called()
 
 
 class AnalysisTests(unittest.TestCase):

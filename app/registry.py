@@ -269,11 +269,21 @@ def _repair_index_history() -> dict:
 
 
 def _krx_market_fresh() -> bool:
-    return all(
-        db.market_run_status("krx", spec["dataset"], day) in {"success", "empty"}
-        for spec in krx.dataset_specs()
-        for day in krx.catchup_dates()
-    )
+    """Fresh means every catch-up day is settled, not merely answered.
+
+    An empty answer for a day the exchange may not have published yet leaves
+    the collector with work to do; calling that fresh is what let the data
+    stop a few days back while every status said healthy.
+    """
+    for spec in krx.dataset_specs():
+        for day in krx.catchup_dates():
+            status = db.market_run_status("krx", spec["dataset"], day)
+            if status == "success":
+                continue
+            if status == "empty" and krx.empty_is_final(day):
+                continue
+            return False
+    return True
 
 
 def _run_krx_market() -> dict:
@@ -295,7 +305,10 @@ def _run_krx_market() -> dict:
             )
             continue
         for day in days:
-            if db.market_run_status("krx", spec["dataset"], day) in {"success", "empty"}:
+            status = db.market_run_status("krx", spec["dataset"], day)
+            if status == "success" or (
+                status == "empty" and krx.empty_is_final(day)
+            ):
                 continue
             key = f"{spec['dataset']}@{day}"
             try:

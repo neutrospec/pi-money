@@ -375,6 +375,13 @@ KEY_ANALYSIS_GROUP = {
     "kr_put_call_value": "positioning",
     "kr_put_call_open_interest": "positioning",
     "kr_vkospi": "volatility",
+    "kr_breakeven_10y": "inflation",
+    "kr_treasury_20y": "policy_rates",
+    "kr_bond_duration": "valuation",
+    "kr_kospi200_futures_oi": "positioning",
+    "kr_kospi200_basis": "positioning",
+    "kr_etf_discount": "credit_stress",
+    "kr_gold_price": "commodities",
     "kr_kospi_per": "valuation",
     "kr_kospi_dividend_yield": "valuation",
     "kr_semiconductor_export_value": "trade_semiconductors",
@@ -405,6 +412,9 @@ KEY_ANALYSIS_GROUP = {
 }
 
 CORE_KEYS = {
+    # 한국 물가 계열이 전부 실현치(후행)뿐이라, 시장이 앞을 어떻게 보는지
+    # 알려주는 유일한 계열입니다. 관측 수가 아직 적어도 채우는 층이 다릅니다.
+    "kr_breakeven_10y",
     "kr_base_rate", "kr_call", "kr_kofr", "kr_cd_91d", "kr_cp_91d",
     "kr_treasury_3y", "kr_treasury_10y", "kr_corp_bond_3y",
     "kr_usd", "kr_cpi", "kr_leading_cycle", "kr_manufacturing_output",
@@ -674,6 +684,15 @@ def catalog() -> dict:
         "kr_put_call_value": ("코스피200 옵션 풋/콜 (거래대금)", "배", "심리", "krx", "opt_bydd_trd/value", []),
         "kr_put_call_open_interest": ("코스피200 옵션 풋/콜 (미결제)", "배", "심리", "krx", "opt_bydd_trd/open_interest", []),
         "kr_vkospi": ("코스피200 변동성지수 (VKOSPI)", "지수", "심리", "krx", "drvprod_dd_trd/코스피 200 변동성지수", []),
+        # 거래소가 이미 보내주는 표에서 끌어올린 계열입니다. 새 공급자 승인이
+        # 아니라 파생만으로 얇은 층을 채웁니다.
+        "kr_breakeven_10y": ("한국 10년 기대인플레이션", "%p", "물가", "krx", "kts_bydd_trd/breakeven", []),
+        "kr_treasury_20y": ("한국 국고채 20년", "%", "금리", "krx", "kts_bydd_trd/20y", []),
+        "kr_bond_duration": ("한국 채권지수 평균 듀레이션", "년", "금리", "krx", "bon_dd_trd/duration", []),
+        "kr_kospi200_futures_oi": ("코스피200 선물 미결제약정", "계약", "심리", "krx", "fut_bydd_trd/open_interest", []),
+        "kr_kospi200_basis": ("코스피200 선물 베이시스", "%", "심리", "krx", "fut_bydd_trd/basis", []),
+        "kr_etf_discount": ("ETF 할인 폭 (하위 5%)", "%p", "시장", "krx", "etf_bydd_trd/discount", []),
+        "kr_gold_price": ("KRX 금 국내가", "원", "상품", "krx", "gold_bydd_trd/price", []),
         # ===== 상품 (Yahoo) =====
         "gold": ("국제 금 (선물)", "달러", "상품", "yahoo", "GC=F", []),
         "silver": ("국제 은 (선물)", "달러", "상품", "yahoo", "SI=F", []),
@@ -738,6 +757,11 @@ RISK_DIRECTION = {
     "us_bank_lending_standards": RISK,
     "kr_household_delinq": RISK,
     "kr_put_call_volume": RISK,
+    # 할인 폭은 양수가 스트레스가 되도록 저장하므로 상승이 위험입니다.
+    "kr_etf_discount": RISK,
+    "kr_treasury_20y": NEUTRAL,
+    "kr_bond_duration": NEUTRAL,
+    "kr_gold_price": NEUTRAL,
     "kr_put_call_value": RISK,
     "kr_put_call_open_interest": RISK,
     # 상승이 그 자체로 조임도 완화도 아닌 계열
@@ -844,6 +868,60 @@ CATEGORY_DESC = {
 # "지금 값의 뜻"은 여기 없다. 그것은 분포 판정에서 생성되며, 숫자가 든
 # 문장을 여기 적으면 월요일이면 틀린 값이 된다.
 EXPLANATIONS = {
+    # ---- KRX 파생 (M6.3) ----
+    "kr_breakeven_10y": {
+        "what": "같은 달에 만기가 오는 국고채와 물가연동국채의 수익률 차이입니다. 채권시장이 앞으로 10년의 평균 물가를 얼마로 보는지를 가격에서 역산한 값입니다.",
+        "why": "한국의 물가 계열은 전부 이미 일어난 물가를 알려줍니다. 이것만이 시장이 앞을 어떻게 보는지 말해 주며, 설문이 아니라 실제 돈이 걸린 기대치입니다.",
+        "how": "이 값이 안정적이면 물가가 일시적으로 튀어도 기대가 고정돼 있다는 뜻입니다. 위로 풀리면 한국은행이 더 강하게 대응할 유인이 커집니다. 기준금리에서 이 값을 빼면 시장이 보는 실질 정책금리가 됩니다.",
+        "watch": [
+            ("kr_cpi", "실현 물가와 기대의 격차"),
+            ("kr_base_rate", "기대 대비 정책 수준"),
+            ("us_breakeven_10y", "글로벌 기대와 같이 움직이는지"),
+        ],
+        "caveat": "지표종목의 만기가 서로 어긋나는 기간에는 관측이 없습니다. 명목과 물가채 벤치마크가 같은 달 만기일 때만 계산하며, 비슷한 만기를 빼서 10년 기대인플레이션이라 부르지 않기 때문입니다. 지표종목이 새 종목으로 넘어갈 때 값이 튈 수 있는데, 이는 발행 사정이지 물가 소식이 아닙니다.",
+    },
+    "kr_treasury_20y": {
+        "what": "잔존 20년 국고채 지표종목의 거래소 종가 수익률입니다. 한국은행 통계에는 없는 만기입니다.",
+        "why": "10년과 30년 사이가 비어 있으면 곡선의 장기 구간 모양을 알 수 없습니다. 보험사·연기금의 수요가 집중되는 구간이라 수급 왜곡이 여기서 먼저 보입니다.",
+        "how": "10년·30년과 함께 놓고 봅니다. 20년이 양쪽보다 낮으면 이 만기에 수요가 몰렸다는 뜻으로, 경기 전망이 아니라 수급의 결과일 수 있습니다.",
+        "watch": [("kr_treasury_10y", "장기 구간 기울기"), ("kr_treasury_30y", "초장기 구간과의 관계")],
+        "caveat": "거래소 종가 기준이라 한국은행이 발표하는 시장 평균 수익률과 소수점 단위로 다를 수 있습니다. 지표종목만 사용하므로 경과종목은 섞이지 않습니다.",
+    },
+    "kr_bond_duration": {
+        "what": "KRX 채권지수의 평균 듀레이션입니다. 금리가 1%p 움직일 때 지수 가격이 대략 몇 % 움직이는지를 나타내는 연 단위 값입니다.",
+        "why": "채권시장 전체가 금리 변화에 얼마나 민감한 상태인지 알려줍니다. 같은 금리 상승이라도 듀레이션이 길면 손실이 큽니다.",
+        "how": "발행이 장기화되면 늘고 단기물 비중이 커지면 줄어듭니다. 듀레이션이 길어진 상태에서 금리가 오르면 채권 보유자의 손실이 커진다는 뜻으로 읽습니다.",
+        "watch": [("kr_treasury_10y", "금리 방향"), ("kr_treasury_20y", "장기 발행 비중")],
+        "caveat": "지수 구성의 성질이지 개별 포트폴리오의 위험이 아닙니다. 구성 종목이 바뀌면 시장 상황과 무관하게 움직입니다.",
+    },
+    "kr_kospi200_futures_oi": {
+        "what": "코스피200 선물의 미결제약정 총합입니다. 주간 세션 전 월물을 더한 값이며 야간 세션은 제외합니다.",
+        "why": "거래량이 하루의 활발함이라면 미결제약정은 실제로 남아 있는 포지션의 크기입니다. 시장에 걸린 판돈의 총량입니다.",
+        "how": "가격 상승과 함께 늘면 새 자금이 들어온 것이고, 가격이 오르는데 줄면 기존 포지션이 정리되는 것입니다. 방향 자체는 이 값만으로 알 수 없습니다.",
+        "watch": [("kr_kospi200_basis", "포지션의 방향 단서"), ("kr_put_call_open_interest", "옵션 쪽 포지셔닝")],
+        "caveat": "만기일 전후로 월물이 넘어가면서 크게 변동합니다. 롤오버 구간의 변화는 포지션 변화가 아닙니다.",
+    },
+    "kr_kospi200_basis": {
+        "what": "미결제약정이 가장 많은 근월물 선물 가격이 현물 지수보다 몇 % 높은지입니다. 이론적으로는 금리에서 배당수익률을 뺀 만큼 벌어집니다.",
+        "why": "선물이 이론값보다 비싸거나 싼 정도는 차익거래 자금과 현물 수급의 상태를 보여줍니다. 프로그램 매매의 방향과 연결됩니다.",
+        "how": "이론 수준보다 크게 낮으면(백워데이션) 현물 매도 압력이 강하다는 뜻으로 읽히는 경우가 많습니다. 절대 부호보다 평소 수준과의 차이를 봅니다.",
+        "watch": [("kr_kospi200_futures_oi", "포지션 규모"), ("kr_base_rate", "이론 베이시스의 금리 성분")],
+        "caveat": "만기가 가까워지면 베이시스는 기계적으로 0으로 수렴합니다. 월물이 넘어갈 때 생기는 톱니 모양은 시장 신호가 아니라 롤오버입니다. 롤오버 구간을 사이에 둔 수준 비교는 하지 마세요.",
+    },
+    "kr_etf_discount": {
+        "what": "그날 거래된 ETF의 가격 대비 순자산가치 괴리를 모아 하위 5% 지점을 할인 폭으로 나타낸 값입니다. 양수가 클수록 할인이 깊습니다.",
+        "why": "ETF가 순자산보다 싸게 거래되면 유동성 공급이 원활하지 않다는 뜻입니다. 시장 스트레스가 유동성 경로에 나타나는 첫 자리 중 하나입니다.",
+        "how": "평상시에는 0 근처에서 얕게 움직입니다. 꼬리가 갑자기 깊어지면 특정 자산군의 호가가 벌어졌다는 신호로 읽습니다.",
+        "watch": [("kr_vkospi", "변동성과 같이 움직이는지"), ("kr_kospi200_basis", "현물·파생 괴리도 함께 벌어졌는지")],
+        "caveat": "상장·폐지로 구성이 계속 바뀌므로 아주 긴 기간의 수준 비교에는 주의가 필요합니다. 당일 거래가 없던 종목은 제외했는데, 멈춘 호가와 움직이는 순자산의 차이는 아무도 거래할 수 없던 괴리이기 때문입니다.",
+    },
+    "kr_gold_price": {
+        "what": "KRX 금시장에서 거래된 순도 99.99% 1kg 금괴의 그램당 원화 가격입니다.",
+        "why": "국제 금 가격을 원화로 환산한 값과 비교하면 국내 프리미엄이 나옵니다. 프리미엄은 국내 안전자산 수요와 조달 여건을 반영합니다.",
+        "how": "국제 금과 환율을 함께 봐야 의미가 생깁니다. 국제 가격이 그대로인데 국내 가격만 오르면 국내 수요나 수급 문제입니다.",
+        "watch": [("gold", "국제 금 가격"), ("kr_usd", "환산에 필요한 환율")],
+        "caveat": "거래소 시장 가격이라 소매 금은방 시세와 다릅니다. 거래량이 적은 날에는 변동이 커집니다.",
+    },
     # ---- commodities ----
     "copper": {
         "what": "국제 구리 선물 가격입니다. 달러 표시이며 근월물입니다.",

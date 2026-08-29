@@ -202,8 +202,12 @@ def _ensure_krx_targets() -> None:
                 coverage_end=day,
             )
             run_status = db.market_run_status("krx", spec["dataset"], day)
+            settled = run_status == "success" or (
+                run_status == "empty" and krx.empty_is_final(day)
+            )
             if run_status in {"success", "empty"}:
                 authorized = True
+            if settled:
                 db.update_recovery_target(
                     LAYER, "krx_history", spec["dataset"], day,
                     status="complete" if run_status == "success" else "verified_empty",
@@ -575,6 +579,17 @@ def _recover_krx(row: dict, remaining_rows: int) -> tuple[dict, int]:
             reason="provider_access_verified",
             details={"last_verified_day": row["scope"]},
         )
+    if not normalized and not krx.empty_is_final(row["scope"]):
+        # The exchange may simply not have published this session yet. Calling
+        # it verified empty now would retire a trading day for good.
+        outcome = db.update_recovery_target(
+            row["layer"], row["kind"], row["target"], row["scope"],
+            status="pending",
+            next_attempt_at=None,
+            reason="awaiting_provider_publication",
+            details={"rows": 0},
+        )
+        return outcome, 0
     outcome = _complete(
         row,
         status="complete" if normalized else "verified_empty",
