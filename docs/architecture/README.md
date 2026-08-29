@@ -95,14 +95,15 @@ flowchart TD
 ### 소비자
 
 - `app/main.py`: 읽기 전용 웹과 REST API. 알 수 없는 심볼은 allowlist에서 거부합니다.
-- `app/mcp_server.py`: MCP 2.0 stdio 도구 25개. FastAPI 없이 DB를 직접 읽습니다.
-- `.pi/extensions/market.ts`: 같은 25개 기능을 로컬 REST로 제공하는 프로젝트 전용 pi 도구입니다.
+- `app/mcp_server.py`: MCP 2.0 stdio 도구 26개. FastAPI 없이 DB를 직접 읽습니다.
+- `.pi/extensions/market.ts`: 같은 26개 기능을 로컬 REST로 제공하는 프로젝트 전용 pi 도구입니다.
 - `.agents/skills/money-market-intelligence/`: 도구 선택, 최신성 확인, 금융 해석 한계를 규정하는 프로젝트 스킬입니다.
 
 ### 판정 층
 
 - `app/normalize.py`: 분포에서의 위치. 관측 창을 계열이 선언하고 호출부가 고르지 않습니다.
 - `app/layers.py`: 카탈로그를 다섯 층으로 다시 자른 근거 카드와 근거 신뢰도.
+- `app/backtest.py`: 655거래일 판정 재생과 오탐·미탐. 평가 쪽 전방 창은 D 이후만 씁니다 — `Ledger` 는 판정 쪽만 막습니다.
 - `app/pit.py`: 과거 시점 재생. `Ledger`가 판정 코드의 읽기를 대신하고, `observed`(관측일)와 `vintage`(수신 시각)를 분리해 두 종류의 누출을 각각 잽니다. 재생할 수 없는 것과 그 이유를 모듈 문서가 명시합니다.
 
 운영 배치와 복구는 [operations.md](operations.md)를 참고하세요.
