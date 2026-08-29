@@ -737,8 +737,9 @@ def catalog() -> dict:
 # tightens conditions or signals stress.  The interface needs it to avoid
 # painting a widening credit spread like a rising index, and the
 # normalization layer needs it to orient a percentile toward risk.
-RISK = "up_is_risk"
-NEUTRAL = "neutral"
+RISK = "up_is_risk"          # 상승이 여건을 조이거나 스트레스를 뜻함
+SUPPORT = "up_is_support"    # 상승이 여건을 풀거나 활동이 강해짐을 뜻함
+NEUTRAL = "neutral"          # 상승이 그 자체로 어느 쪽도 아님
 
 # Deliberately partial.  A series nobody has classified is left out and gets
 # no risk orientation at all, which is honest; a wrong default would be worse
@@ -781,6 +782,140 @@ RISK_DIRECTION = {
     "kr_cpi": NEUTRAL,
     "us_cpi": NEUTRAL,
     "kr_semiconductor_export_value": NEUTRAL,
+
+    # ── 금리·수익률: 관례상 NEUTRAL ──────────────────────────────────
+    # 금리 상승은 조이는 것이 맞지만, 이 사전은 "빨강이 곤란"을 뜻하는 축으로
+    # 쓰입니다. 정책·시장 금리를 스트레스와 같은 색으로 칠하면 통화정책 정상화와
+    # 신용 경색이 구분되지 않습니다. 기존 선언(kr_base_rate 등)을 그대로 따릅니다.
+    "kr_treasury_1y": NEUTRAL, "kr_treasury_2y": NEUTRAL,
+    "kr_treasury_5y": NEUTRAL, "kr_treasury_30y": NEUTRAL,
+    "kr_call": NEUTRAL, "kr_koribor_3m": NEUTRAL,
+    "kr_msb_91d": NEUTRAL, "kr_msb_364d": NEUTRAL,
+    "kr_deposit_rate": NEUTRAL, "kr_loan_rate": NEUTRAL,
+    # AA− 회사채(kr_corp_bond_3y)를 NEUTRAL로 둔 것과 같은 이유입니다. 신용
+    # 스트레스는 수익률 수준이 아니라 국고채와의 스프레드에서 읽습니다.
+    "kr_corp_bond_bbb": NEUTRAL,
+    "us_3m": NEUTRAL, "us_1y": NEUTRAL, "us_5y": NEUTRAL, "us_30y": NEUTRAL,
+    "us_real_10y": NEUTRAL, "us_term_premium_10y": NEUTRAL,
+    "us_sofr": NEUTRAL,
+    "eu_rate": NEUTRAL, "eu_3m_rate": NEUTRAL,
+    "gb_rate": NEUTRAL, "gb_sonia": NEUTRAL, "jp_rate": NEUTRAL,
+    # 가격이 금리와 반대로 움직이는 ETF입니다. 상승이 완화 신호일 수도
+    # 안전자산 쏠림일 수도 있어 한쪽으로 정하지 않습니다.
+    "us_long_treasury_proxy": NEUTRAL,
+
+    # ── 물가: 관례상 NEUTRAL ─────────────────────────────────────────
+    # 물가 상승은 정책을 조이게 만들지만 디플레 탈출이기도 합니다.
+    # kr_cpi·us_cpi를 NEUTRAL로 둔 기존 결정을 계열 전체로 확장합니다.
+    "kr_core_cpi": NEUTRAL, "kr_ppi": NEUTRAL, "kr_living_cpi": NEUTRAL,
+    "kr_import_price": NEUTRAL, "kr_logic_ppi": NEUTRAL,
+    "us_core_cpi": NEUTRAL, "us_pce": NEUTRAL, "us_core_pce": NEUTRAL,
+    "us_ppi": NEUTRAL,
+    "cn_cpi": NEUTRAL, "eu_hcpi": NEUTRAL, "gb_cpi": NEUTRAL,
+    # 기대인플레이션도 같습니다 — 상승이 과열 경계이기도, 기대 고정의
+    # 회복이기도 합니다.
+    "kr_breakeven_10y": NEUTRAL, "us_breakeven_10y": NEUTRAL,
+    "us_forward_inflation_5y5y": NEUTRAL,
+
+    # ── 실물 활동: 상승이 곧 강해짐 ──────────────────────────────────
+    "kr_gdp_growth": SUPPORT, "eu_gdp": SUPPORT, "us_gdp": SUPPORT,
+    "kr_leading_cycle": SUPPORT, "kr_coincident_cycle": SUPPORT,
+    "kr_all_industry_output": SUPPORT, "kr_manufacturing_output": SUPPORT,
+    "kr_manufacturing_shipments": SUPPORT, "kr_manufacturing_utilization": SUPPORT,
+    "kr_services_output": SUPPORT, "kr_retail_sales": SUPPORT,
+    "kr_private_consumption": SUPPORT, "kr_credit_card_spending": SUPPORT,
+    "kr_equipment_investment": SUPPORT, "kr_facilities_invest": SUPPORT,
+    "kr_machinery_orders": SUPPORT, "kr_building_permits": SUPPORT,
+    "kr_construction_started": SUPPORT, "kr_exports_growth": SUPPORT,
+    "us_cfnai": SUPPORT, "us_industrial_production": SUPPORT,
+    "us_retail": SUPPORT, "us_durable": SUPPORT, "us_manufacturing_hours": SUPPORT,
+    # 증시 대기자금. 늘면 들어올 돈이 쌓인 것입니다.
+    "kr_investor_deposits": SUPPORT,
+    # 재고 증가는 보충일 수도 안 팔린 것일 수도 있습니다. 출하와 같이 봐야
+    # 갈리므로 이 계열 하나로는 방향을 정하지 않습니다.
+    "kr_manufacturing_inventory": NEUTRAL,
+    # Sahm 규칙은 침체 판별용이라 상승 자체가 경고입니다.
+    "us_sahm": RISK,
+
+    # ── 대외: 호가 방향을 하나씩 확인했습니다 ────────────────────────
+    # DEXKOUS는 달러당 원화라 kr_usd와 같은 방향입니다.
+    "us_krw": RISK,
+    # 교차환율은 원화 조달여건과 직접 연결되지 않습니다. 달러 약세가 위험선호와
+    # 동행하는 경향은 상관이지 정의가 아니므로 방향을 주지 않습니다.
+    # (eur_usd·usd_gbp는 달러 표시, 나머지는 상대통화 표시로 부호가 서로 반대)
+    "eur_usd": NEUTRAL, "usd_jpy": NEUTRAL, "usd_gbp": NEUTRAL,
+    "usd_brl": NEUTRAL, "usd_cny": NEUTRAL,
+    "kr_jpy": NEUTRAL, "kr_eur": NEUTRAL, "kr_cny": NEUTRAL,
+    "kr_fx_reserves": SUPPORT, "kr_current_account": SUPPORT,
+    "kr_export_value_index": SUPPORT, "kr_export_volume_index": SUPPORT,
+    "kr_terms_of_trade": SUPPORT, "kr_income_terms_of_trade": SUPPORT,
+    # 대외채무와 외국인 증권투자 잔액은 늘어난 것이 취약성이기도 유입이기도
+    # 합니다. 보유액 대비 비율이 판단 근거이지 잔액 자체가 아닙니다.
+    "kr_external_debt": NEUTRAL, "kr_portfolio_liabilities": NEUTRAL,
+    "kr_semiconductor_import_value": NEUTRAL,
+
+    # ── 고용: 방향이 계열마다 뒤집힙니다 ─────────────────────────────
+    "us_nfp": SUPPORT, "us_job_openings": SUPPORT, "kr_employment_rate": SUPPORT,
+    # 반직관 케이스: 퇴사율 상승은 더 나은 자리를 찾을 수 있다는 자신감입니다.
+    "us_quits_rate": SUPPORT,
+    "us_jobless": RISK, "us_continued_claims": RISK,
+    "us_unemployment": RISK, "kr_unemployment": RISK, "jp_unemployment": RISK,
+    # 임금·단위노동비용 상승은 가계 소득이자 물가 압력입니다.
+    "kr_hourly_wage": NEUTRAL, "kr_unit_labor_cost": NEUTRAL,
+
+    # ── 유동성: 순유동성 정의(WALCL − TGA − ONRRP)의 부호를 따릅니다 ──
+    "us_fed_assets": SUPPORT, "us_reserve_balances": SUPPORT,
+    "us_tga": RISK, "us_on_rrp": RISK,
+    # 통화량 증가는 완화이면서 물가 압력이라 한쪽으로 정하지 않습니다.
+    "kr_m1": NEUTRAL, "kr_m2": NEUTRAL, "kr_l": NEUTRAL, "kr_lf": NEUTRAL,
+    "us_m2": NEUTRAL,
+
+    # ── 시장폭·주가 proxy ───────────────────────────────────────────
+    "kr_kospi_market_cap": SUPPORT, "kr_kosdaq_market_cap": SUPPORT,
+    "us_equal_weight_proxy": SUPPORT, "us_semiconductor_proxy": SUPPORT,
+    "us_discretionary_proxy": SUPPORT, "us_regional_bank_proxy": SUPPORT,
+    # 거래대금·회전율은 강세장에서도 패닉에서도 늘어납니다.
+    "kr_kospi_trading_value": NEUTRAL, "kr_kosdaq_trading_value": NEUTRAL,
+    "kr_kospi_turnover": NEUTRAL, "kr_kosdaq_turnover": NEUTRAL,
+    # 필수소비재는 방어 자산이라 상승이 위험선호가 아니라 회피일 수 있습니다.
+    "us_staples_proxy": NEUTRAL,
+
+    # ── 신용 ────────────────────────────────────────────────────────
+    # 채권 ETF 가격은 스프레드가 좁아질 때 오릅니다.
+    "us_high_yield_proxy": SUPPORT, "us_lqd_proxy": SUPPORT,
+    # 대출·예금·가계신용 잔액은 명목상 계속 늘어납니다. 증가 자체가 신호가
+    # 아니라 소득 대비 비율과 증가 속도가 신호입니다.
+    "kr_total_loans": NEUTRAL, "kr_total_deposits": NEUTRAL,
+    "kr_household_credit": NEUTRAL,
+
+    # ── 심리 ────────────────────────────────────────────────────────
+    "kr_consumer_sentiment": SUPPORT, "kr_business_sentiment": SUPPORT,
+    "kr_economic_sentiment": SUPPORT, "kr_manufacturing_bsi": SUPPORT,
+    "us_consumer_sentiment": SUPPORT,
+
+    # ── 원자재: gold·wti·copper를 NEUTRAL로 둔 관례를 따릅니다 ───────
+    "brent": NEUTRAL, "kr_dubai_oil": NEUTRAL, "kr_gold": NEUTRAL,
+    "silver": NEUTRAL,
+
+    # ── 주택 ────────────────────────────────────────────────────────
+    # 착공은 활동이지만 가격 상승은 자산효과이자 부담입니다.
+    "us_housing": SUPPORT,
+    "us_house_price": NEUTRAL, "kr_house_sales": NEUTRAL,
+    "kr_house_jeonse": NEUTRAL,
+
+    # ── 반도체 교역 ──────────────────────────────────────────────────
+    # kr_semiconductor_export_value가 이미 NEUTRAL이라 계열 전체를 맞춥니다.
+    # 이 그룹은 SUPPORT 의미가 자리잡은 뒤 한 번에 재검토할 후보입니다.
+    "kr_semiconductor_export_price": NEUTRAL,
+    "kr_semiconductor_export_volume": NEUTRAL,
+    "kr_dram_ppi": NEUTRAL, "kr_nand_ppi": NEUTRAL,
+
+    # ── 밸류에이션·포지셔닝: 이중적이라 방향을 주지 않습니다 ──────────
+    # PER 상승은 비싸진 것이지 위험해진 것이 아니고, 배당수익률 상승은
+    # 싸진 것이자 주가가 내린 것입니다.
+    "kr_kospi_per": NEUTRAL, "kr_kospi_dividend_yield": NEUTRAL,
+    # M6.3 설명에 "방향 자체는 이 값만으로 알 수 없다"고 적었습니다.
+    "kr_kospi200_futures_oi": NEUTRAL, "kr_kospi200_basis": NEUTRAL,
 }
 
 # Levels that mean revert instead of drifting with a cycle.  These are judged

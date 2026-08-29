@@ -603,6 +603,55 @@ class NormalizationEngineTests(TemporaryDatabaseTest):
             normalize.TRAILING_WINDOW, normalize.window_for("kr_treasury_3y")
         )
 
+    def test_every_catalogued_series_declares_what_a_rise_means(self):
+        """The dictionary is complete, so a new series fails here loudly.
+
+        Leaving a key out is not neutrality — it is an unanswered question,
+        and a reading built on it silently loses its orientation.
+        """
+        catalog = indicators.catalog()
+        missing = [key for key in catalog if indicators.risk_direction(key) is None]
+        self.assertEqual([], missing)
+        stray = [key for key in indicators.RISK_DIRECTION if key not in catalog]
+        self.assertEqual([], stray)
+
+    def test_the_two_declared_directions_are_mirrors_of_each_other(self):
+        """A rise that supports reads straight through; one that tightens inverts."""
+        points = [
+            {"date": (date(2025, 1, 1) + timedelta(days=i)).isoformat(),
+             "value": float(i % 90)}
+            for i in range(200)
+        ]
+        risky = normalize.position(points, direction=indicators.RISK, minimum=60)
+        supportive = normalize.position(
+            points, direction=indicators.SUPPORT, minimum=60
+        )
+        self.assertEqual(supportive["percentile"], supportive["risk_percentile"])
+        # Rounding happens inside the primitive, so the mirror holds to the
+        # precision it reports rather than to the bit.
+        self.assertAlmostEqual(
+            100.0 - risky["percentile"], risky["risk_percentile"], places=6
+        )
+        self.assertNotEqual(risky["risk_percentile"], supportive["risk_percentile"])
+
+    def test_a_supportive_series_is_not_framed_as_a_risk_signal(self):
+        """The same sentence on a supportive series says the opposite."""
+        db.init_db()
+        key = next(
+            k for k, v in indicators.RISK_DIRECTION.items()
+            if v == indicators.SUPPORT
+        )
+        db.save_indicator_points(
+            key,
+            [{"date": (date(2025, 1, 1) + timedelta(days=i)).isoformat(),
+              "value": float(i)} for i in range(300)],
+            "test",
+        )
+        sentence = explain.explain(key)["now"]
+        self.assertIsNotNone(sentence)
+        self.assertNotIn("위험 신호", sentence)
+        self.assertIn("여건 완화", sentence)
+
     def test_unclassified_series_gets_no_risk_orientation(self):
         """A guessed direction would orient every downstream reading backwards."""
         points = [{"date": f"2026-01-{d:02d}", "value": float(d)} for d in range(1, 29)]

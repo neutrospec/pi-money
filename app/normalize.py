@@ -92,10 +92,15 @@ def position(
         }
     scope = values if window is None else values[-window:]
     plain = percentile(values[-1], scope)
-    oriented = (
-        percentile(values[-1], scope, invert=True)
-        if direction == indicators.RISK else None
-    )
+    # Two declared directions, mirrored: a series whose rise tightens reads
+    # inverted, one whose rise supports reads straight through. A series
+    # nobody classified gets neither rather than a guessed orientation.
+    if direction == indicators.RISK:
+        oriented = percentile(values[-1], scope, invert=True)
+    elif direction == indicators.SUPPORT:
+        oriented = plain
+    else:
+        oriented = None
     return {
         "available": True,
         "value": values[-1],

@@ -42,14 +42,21 @@ def _now_sentence(spec: dict, reading: dict) -> str | None:
     place = f"{reading['window_label']} 분포에서 상위 {reading['percentile']:.0f}%"
     sentence = f"현재 {value}{unit} — {place}입니다"
     if reading.get("risk_percentile") is not None:
-        # Only series whose direction is declared get a risk reading; the rest
-        # are left as a plain placement rather than given a guessed meaning.
+        # Only series whose direction is declared get a risk reading, and the
+        # framing has to match which direction was declared — the same
+        # sentence on a series whose rise is supportive says the opposite of
+        # what the data means.
         stance = (
             "위험 회피 쪽" if reading["risk_percentile"] <= 20
             else "위험 선호 쪽" if reading["risk_percentile"] >= 80
             else "중립"
         )
-        sentence += f". 상승이 위험 신호인 계열이라 지금 위치는 {stance}입니다"
+        lead = (
+            "상승이 위험 신호인 계열이라"
+            if reading["direction"] == indicators.RISK
+            else "상승이 여건 완화·활동 강화를 뜻하는 계열이라"
+        )
+        sentence += f". {lead} 지금 위치는 {stance}입니다"
     sentence += f" (관측일 {reading['as_of']})."
     if reading.get("caveat"):
         sentence += f" {reading['caveat']}"
