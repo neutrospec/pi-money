@@ -60,6 +60,19 @@ UNPRICED_DATASETS = (
     "sri_bond_info",
 )
 
+# Where a plain holding of a listed code lives. Ordered, and the order is a
+# declaration: a line that says "005930" means the share, not a future or an
+# option written on it. Derivatives are deliberately absent — holding one is
+# specific enough that the dataset should be stated rather than guessed.
+SPOT_DATASETS = (
+    "stk_bydd_trd",     # KOSPI shares
+    "ksq_bydd_trd",     # KOSDAQ shares
+    "knx_bydd_trd",     # KONEX shares
+    "etf_bydd_trd",
+    "etn_bydd_trd",
+    "elw_bydd_trd",
+)
+
 
 # ---------------------------------------------------------------------------
 # Reads
@@ -83,6 +96,54 @@ def latest_as_of(account_id: int) -> str | None:
             (account_id,),
         ).fetchone()
     return row["as_of"] if row else None
+
+
+def resolve_dataset(source: str, symbol: str, dataset: str = "") -> dict:
+    """Find which table actually prices this code.
+
+    The design requires a holding to be stored as ``(source, dataset, symbol)``
+    because one code can appear in several tables. That is right for storage
+    and wrong as a thing to ask a person to type: nobody should have to know
+    that 005930 is in ``stk_bydd_trd`` while 102110 is in ``etf_bydd_trd``, and
+    getting it wrong produces a holding that silently reports as unvaluable
+    when the price is sitting in the cache.
+
+    So the triple is still what gets stored — it is just resolved rather than
+    demanded. A stated dataset that prices the code is kept as given. One that
+    does not is corrected, and the correction is reported rather than applied
+    quietly. A code in more than one spot table is left alone and reported as
+    ambiguous, because picking one would be a guess.
+    """
+    if not source or not symbol:
+        return {"dataset": dataset, "corrected": False, "reason": None}
+    with db.get_conn() as conn:
+        if dataset and dataset not in UNPRICED_DATASETS:
+            hit = conn.execute(
+                """SELECT 1 FROM market_daily WHERE source=? AND dataset=?
+                   AND symbol=? AND close IS NOT NULL LIMIT 1""",
+                (source, dataset, symbol),
+            ).fetchone()
+            if hit:
+                return {"dataset": dataset, "corrected": False, "reason": None}
+        found = [
+            row["dataset"] for row in conn.execute(
+                """SELECT DISTINCT dataset FROM market_daily
+                   WHERE source=? AND symbol=? AND close IS NOT NULL""",
+                (source, symbol),
+            ) if row["dataset"] in SPOT_DATASETS
+        ]
+    if len(found) == 1:
+        return {
+            "dataset": found[0], "corrected": found[0] != dataset,
+            "reason": (f"{dataset or '(빈칸)'} → {found[0]} 로 정정했습니다"
+                       if found[0] != dataset else None),
+        }
+    if len(found) > 1:
+        return {"dataset": dataset, "corrected": False,
+                "reason": f"{symbol} 이 여러 표에 있습니다 ({', '.join(sorted(found))}) "
+                          f"— 어느 것인지 직접 적어주세요"}
+    return {"dataset": dataset, "corrected": False,
+            "reason": f"{symbol} 의 가격을 캐시에서 찾지 못했습니다"}
 
 
 def _price(source: str, dataset: str, symbol: str) -> dict | None:
@@ -358,14 +419,20 @@ def import_rows(account_id: int, as_of: str, text: str, *,
     rows = _parse_rows(text)
     if not rows:
         raise ValueError("적재할 행이 없습니다 — 머리글과 최소 한 줄이 필요합니다")
-    parsed = []
+    parsed, resolutions = [], []
     for row in rows:
+        source = row.get("source") or ""
+        symbol = row.get("symbol") or ""
+        found = resolve_dataset(source, symbol, row.get("dataset") or "")
+        if found["reason"]:
+            resolutions.append({"symbol": symbol, "name": row.get("name") or symbol,
+                                **found})
         parsed.append({
             "account_id": account_id, "as_of": as_of,
-            "source": row.get("source") or "",
-            "dataset": row.get("dataset") or "",
-            "symbol": row.get("symbol") or "",
-            "name": row.get("name") or row.get("symbol") or "",
+            "source": source,
+            "dataset": found["dataset"],
+            "symbol": symbol,
+            "name": row.get("name") or symbol,
             "quantity": float(row["quantity"]) if row.get("quantity") else None,
             "book_amount": (
                 float(row["book_amount"]) if row.get("book_amount") else None
@@ -386,7 +453,7 @@ def import_rows(account_id: int, as_of: str, text: str, *,
         if dry_run:
             return {"dry_run": True, "account_id": account_id, "as_of": as_of,
                     "would_remove": existing, "would_add": len(parsed),
-                    "rows": parsed}
+                    "resolutions": resolutions, "rows": parsed}
         conn.execute(
             "DELETE FROM holding_snapshots WHERE account_id=? AND as_of=?",
             (account_id, as_of),
@@ -402,7 +469,44 @@ def import_rows(account_id: int, as_of: str, text: str, *,
             parsed,
         )
     return {"dry_run": False, "account_id": account_id, "as_of": as_of,
-            "removed": existing, "added": len(parsed)}
+            "removed": existing, "added": len(parsed),
+            "resolutions": resolutions}
+
+
+def repair_datasets(account_id: int | None = None, *, dry_run: bool = False) -> dict:
+    """Re-resolve stored holdings whose dataset does not price them.
+
+    Rows written before the import learned to resolve are still wrong, and a
+    wrong dataset is invisible on screen — the holding just reads as
+    unvaluable. This corrects them explicitly and reports each change rather
+    than fixing things behind the reader's back.
+    """
+    where = " WHERE account_id=?" if account_id else ""
+    params = (account_id,) if account_id else ()
+    with db.get_conn() as conn:
+        rows = [dict(row) for row in conn.execute(
+            "SELECT account_id, as_of, source, dataset, symbol, name "
+            "FROM holding_snapshots" + where, params)]
+    changes = []
+    for row in rows:
+        found = resolve_dataset(row["source"], row["symbol"], row["dataset"])
+        if not found["corrected"]:
+            continue
+        changes.append({**{key: row[key] for key in
+                           ("account_id", "as_of", "symbol", "name")},
+                        "from": row["dataset"], "to": found["dataset"]})
+        if dry_run:
+            continue
+        with db.get_conn() as conn:
+            conn.execute(
+                """UPDATE holding_snapshots SET dataset=?
+                   WHERE account_id=? AND as_of=? AND source=? AND dataset=?
+                     AND symbol=?""",
+                (found["dataset"], row["account_id"], row["as_of"],
+                 row["source"], row["dataset"], row["symbol"]),
+            )
+    return {"dry_run": dry_run, "examined": len(rows), "changed": len(changes),
+            "changes": changes}
 
 
 def record_flow(account_id: int, day: str, kind: str, amount: float, *,

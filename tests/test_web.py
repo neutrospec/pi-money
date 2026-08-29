@@ -41,6 +41,8 @@ UI_EXEMPT = {
                                      "on /portfolio and gated to local requests",
     "/api/portfolio/holdings": "write endpoint, called by the form JS on "
                                "/portfolio and gated to local requests",
+    "/api/portfolio/repair": "write endpoint, called by the form JS on "
+                             "/portfolio and gated to local requests",
     "/api/portfolio/flow": "write endpoint, called by the form JS on "
                            "/portfolio and gated to local requests",
     "/api/portfolio/tag": "write endpoint, called by the form JS on "

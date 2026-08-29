@@ -227,6 +227,14 @@ def api_import_holdings(body: dict = Body(...)):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@app.post("/api/portfolio/repair", dependencies=[Depends(webwrite.require_local_write)])
+def api_repair_datasets(body: dict = Body(default={})):
+    """Re-resolve stored holdings whose dataset does not price them."""
+    account = body.get("account_id")
+    return portfolio.repair_datasets(
+        int(account) if account else None, dry_run=bool(body.get("preview")))
+
+
 @app.post("/api/portfolio/flow", dependencies=[Depends(webwrite.require_local_write)])
 def api_record_flow(body: dict = Body(...)):
     try:

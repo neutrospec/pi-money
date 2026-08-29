@@ -183,20 +183,22 @@
         </div>
         <label class="field" style="margin-bottom:10px;"><span>CSV</span>
           <textarea id="hCsv" rows="9" spellcheck="false"
-            placeholder="source,dataset,symbol,name,quantity,book_amount,stated_value,currency,is_risky_asset,note&#10;krx,etf_bydd_trd,069500,KODEX 200,10,,,KRW,1,&#10;,,예금,수시입출금,,,3000000,KRW,0,"></textarea></label>
+            placeholder="source,dataset,symbol,name,quantity,book_amount,stated_value,currency,is_risky_asset,note&#10;krx,,005930,삼성전자,10,,,KRW,1,&#10;krx,,069500,KODEX 200,20,,,KRW,1,&#10;,,예금,수시입출금,,,3000000,KRW,0,"></textarea></label>
         <div class="actions">
           <button onclick="importHoldings(true)">미리보기</button>
           <button class="primary" onclick="importHoldings(false)">적재</button>
+          <button onclick="repairDatasets()">저장된 행 데이터셋 재확인</button>
         </div>
         <div class="note warn">
           같은 (계좌, 기준일)은 <b>전량 교체</b>됩니다 — 남길 종목도 전부 포함하세요.
           미리보기로 무엇이 지워지는지 먼저 확인하는 것을 권합니다.
         </div>
         <div class="note">
-          국내 상장 종목은 <code>source=krx</code>와 데이터셋을 적으면 가격이 붙습니다
-          (<code>stk_bydd_trd</code> 코스피, <code>ksq_bydd_trd</code> 코스닥,
-          <code>etf_bydd_trd</code> ETF). 예금·해외자산처럼 값을 붙일 수 없는 것은
-          앞 두 칸을 비우고 <code>stated_value</code>에 직접 적으세요.
+          국내 상장 종목은 <code>source=krx</code>와 <b>종목코드만</b> 적으면 됩니다 —
+          <code>dataset</code>은 비워두세요. 어느 표에 있는지는 시스템이 찾습니다
+          (틀리게 적어도 정정하고, 무엇을 고쳤는지 알려줍니다).
+          예금·해외자산처럼 값을 붙일 수 없는 것은 <code>source</code>도 비우고
+          <code>stated_value</code>에 직접 적으세요.
           <code>is_risky_asset</code>을 비우면 <b>미상</b>으로 남습니다 — 안전으로 세지 않습니다.
         </div>
         {% endif %}
@@ -305,12 +307,21 @@
       csv: document.getElementById('hCsv').value, preview: preview,
     });
     if (!d) return;
+    const fixes = (d.resolutions || []).map(r => r.name + ': ' + r.reason).join(' · ');
     if (preview) {
-      say('미리보기 — 기존 ' + d.would_remove + '행을 지우고 ' + d.would_add + '행을 넣습니다. 적재를 누르면 실행됩니다.');
+      say('미리보기 — 기존 ' + d.would_remove + '행을 지우고 ' + d.would_add + '행을 넣습니다.'
+          + (fixes ? ' [' + fixes + ']' : '') + ' 적재를 누르면 실행됩니다.');
     } else {
-      say(d.removed + '행 교체 → ' + d.added + '행 적재됨');
+      say(d.removed + '행 교체 → ' + d.added + '행 적재됨' + (fixes ? ' [' + fixes + ']' : ''));
       setTimeout(() => location.reload(), 700);
     }
+  }
+  async function repairDatasets() {
+    const d = await send('/api/portfolio/repair', {});
+    if (!d) return;
+    if (!d.changed) { say(d.examined + '행 확인 — 고칠 것이 없습니다'); return; }
+    say(d.changed + '행 정정: ' + d.changes.map(c => c.name + ' ' + c.from + '→' + c.to).join(', '));
+    setTimeout(() => location.reload(), 1200);
   }
   async function addFlow() {
     if (!val('fAmount')) { say('금액이 필요합니다.', true); return; }

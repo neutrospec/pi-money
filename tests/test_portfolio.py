@@ -160,6 +160,88 @@ class ValuationTests(TemporaryDatabaseTest):
         self.assertIn("stk_isu_base_info", portfolio.UNPRICED_DATASETS)
 
 
+class DatasetResolutionTests(TemporaryDatabaseTest):
+    """Nobody should have to know which KRX table prices which code."""
+
+    def test_a_wrong_dataset_is_corrected_and_the_correction_is_reported(self):
+        # 005930 in etf_bydd_trd was the real failure: the price sat in the
+        # cache while the holding read as unvaluable, and nothing on screen
+        # said why.
+        self.priced("stk_bydd_trd", "005930", "2026-08-28", 257000.0)
+        account = portfolio.add_account("테스트", "테스트 증권", "general")
+        result = portfolio.import_rows(
+            account, "2026-08-30",
+            "source,dataset,symbol,name,quantity\nkrx,etf_bydd_trd,005930,합성 주식,10")
+        self.assertEqual(1, len(result["resolutions"]))
+        self.assertIn("stk_bydd_trd", result["resolutions"][0]["reason"])
+        item = portfolio.holdings(account, today=date(2026, 8, 30))[0]
+        self.assertEqual(("stk_bydd_trd", portfolio.MARKET, 2570000.0),
+                         (item["dataset"], item["grade"], item["amount"]))
+
+    def test_a_blank_dataset_is_filled_in(self):
+        self.priced("stk_bydd_trd", "005930", "2026-08-28", 257000.0)
+        account = portfolio.add_account("테스트", "테스트 증권", "general")
+        portfolio.import_rows(account, "2026-08-30",
+                              "source,dataset,symbol,name,quantity\nkrx,,005930,합성,1")
+        self.assertEqual("stk_bydd_trd",
+                         portfolio.holdings(account, today=date(2026, 8, 30))[0]["dataset"])
+
+    def test_a_correct_dataset_is_left_alone(self):
+        self.priced("etf_bydd_trd", "102110", "2026-08-28", 40000.0)
+        found = portfolio.resolve_dataset("krx", "102110", "etf_bydd_trd")
+        self.assertEqual(("etf_bydd_trd", False), (found["dataset"], found["corrected"]))
+
+    def test_a_code_in_two_spot_tables_is_reported_not_guessed(self):
+        self.priced("stk_bydd_trd", "005930", "2026-08-28", 257000.0)
+        self.priced("ksq_bydd_trd", "005930", "2026-08-28", 1.0)
+        found = portfolio.resolve_dataset("krx", "005930", "")
+        self.assertFalse(found["corrected"])
+        self.assertIn("여러 표에", found["reason"])
+
+    def test_a_derivative_table_is_never_chosen_for_a_bare_code(self):
+        # A line saying "005930" means the share. A future written on it is
+        # specific enough that the dataset should be stated.
+        self.priced("eqsfu_stk_bydd_trd", "005930", "2026-08-28", 250000.0)
+        found = portfolio.resolve_dataset("krx", "005930", "")
+        self.assertEqual("", found["dataset"])
+        self.assertIn("찾지 못했습니다", found["reason"])
+
+    def test_an_unknown_code_is_reported_rather_than_silently_unpriced(self):
+        found = portfolio.resolve_dataset("krx", "999999", "")
+        self.assertIn("찾지 못했습니다", found["reason"])
+
+    def test_a_holding_with_no_source_is_left_entirely_alone(self):
+        # Deposits and foreign assets carry no anchor and must not be hunted.
+        found = portfolio.resolve_dataset("", "예금", "")
+        self.assertEqual((None, False), (found["reason"], found["corrected"]))
+
+    def test_repair_fixes_rows_written_before_resolution_existed(self):
+        self.priced("stk_bydd_trd", "005930", "2026-08-28", 257000.0)
+        account = portfolio.add_account("테스트", "테스트 증권", "general")
+        with db.get_conn() as conn:
+            conn.execute(
+                """INSERT INTO holding_snapshots
+                   (account_id, as_of, source, dataset, symbol, name, quantity,
+                    currency, recorded_at)
+                   VALUES (?, '2026-08-30', 'krx', 'etf_bydd_trd', '005930',
+                           '합성', 10, 'KRW', '2026-08-30')""", (account,))
+        preview = portfolio.repair_datasets(dry_run=True)
+        self.assertEqual(1, preview["changed"])
+        self.assertEqual(portfolio.UNPRICED,
+                         portfolio.holdings(account, today=date(2026, 8, 30))[0]["grade"])
+        portfolio.repair_datasets()
+        self.assertEqual(portfolio.MARKET,
+                         portfolio.holdings(account, today=date(2026, 8, 30))[0]["grade"])
+
+    def test_repair_reports_nothing_to_do_rather_than_touching_rows(self):
+        self.priced("etf_bydd_trd", "102110", "2026-08-28", 40000.0)
+        account = portfolio.add_account("테스트", "테스트 증권", "general")
+        portfolio.import_rows(account, "2026-08-30",
+                              "source,dataset,symbol,name,quantity\nkrx,etf_bydd_trd,102110,합성,1")
+        result = portfolio.repair_datasets()
+        self.assertEqual((1, 0), (result["examined"], result["changed"]))
+
+
 class RiskyAssetTests(TemporaryDatabaseTest):
     """Unknown is not safe. The DC limit's correctness rests on that."""
 
