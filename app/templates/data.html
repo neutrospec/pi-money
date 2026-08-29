@@ -35,6 +35,18 @@
     <div class="scroll" id="indices"><div class="m">불러오는 중...</div></div>
   </div>
 
+  <div class="card">
+    <div class="card-title">과거 시점 재생</div>
+    <div class="card-sub">
+      판정이 오늘 맞다는 것과 그날에도 맞았을 것이라는 건 다른 주장입니다.
+      뒤의 주장을 하려면 그날 받은 값만으로 같은 코드를 돌려야 하고, 그러려면
+      빈티지 원장이 그만큼 깊어야 합니다. 아래는 계열마다 <b>언제부터</b>
+      재생할 수 있는지입니다 — 추정이 아니라 원장에 이미 적힌 사실입니다.
+    </div>
+    <div id="pitVerdict" class="m">불러오는 중...</div>
+    <div class="scroll" id="pit"></div>
+  </div>
+
 <script>
 function esc(s) { return String(s ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
 function tile(label, value, note, cls) {
@@ -113,6 +125,26 @@ fetch('/api/coverage?detail=indices').then(r => r.json()).then(d => {
       + '<td class="' + (ok ? 'sig-ok' : 'sig-warn') + '">' + esc(i.tail) + '</td></tr>';
   });
   document.getElementById('indices').innerHTML = html + '</tbody></table>';
+});
+fetch('/api/replay/readiness').then(r => r.json()).then(d => {
+  const done = d.complete_from
+    ? '전체 재생 가능: ' + esc(d.complete_from) + '부터'
+    : '아직 전체 재생은 불가능합니다 — ' + (d.waiting || []).length + '개 계열이 깊이를 못 채웠습니다';
+  document.getElementById('pitVerdict').innerHTML =
+    '원장 시작 ' + esc(d.ledger_began) + ' · 오늘 재생 가능 ' + d.usable + '/' + d.requested
+    + ' · ' + done + '<div style="margin-top:6px;">' + esc(d.method) + '</div>';
+  document.getElementById('pit').innerHTML =
+    '<table><thead><tr><th>계열</th><th>원장 관측</th><th>필요</th>'
+    + '<th>재생 가능 시점</th><th>설명</th></tr></thead><tbody>'
+    + (d.series || []).map(s =>
+        '<tr><td>' + esc(s.key) + '</td><td>' + s.observations + '</td>'
+        + '<td>' + s.minimum + '</td>'
+        + '<td style="color:' + (s.usable_today ? '#3fb950' : '#d29922') + ';">'
+        + esc(s.replayable_from || '—') + '</td>'
+        + '<td class="m">' + esc(s.note) + '</td></tr>').join('')
+    + '</tbody></table>';
+}).catch(() => {
+  document.getElementById('pitVerdict').textContent = '재생 준비도를 읽지 못했습니다.';
 });
 </script>
 {% endblock %}

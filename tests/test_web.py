@@ -33,6 +33,9 @@ UI_EXEMPT = {
                   "endpoint exists because agents consume the briefing too",
     "/api/layers": "the /layers page renders this payload server-side; the "
                    "endpoint exists because agents read the layer cards too",
+    "/api/replay": "agent-facing point-in-time replay; the ledger is still "
+                   "too thin for a screen and /data reports when that changes",
+    "/api/replay/leak": "agent-facing leak measurement over the same replay",
     "/api/analysis/regime": "included in the server-rendered situation payload",
     "/api/analysis/sentiment": "included in the server-rendered situation payload",
     "/api/events": "the calendar page renders events server-side",
@@ -101,6 +104,16 @@ class PageRenderTests(unittest.TestCase):
 class ApiReachabilityTests(unittest.TestCase):
     """Every endpoint should be reachable from the UI or explicitly exempt."""
 
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.original_path = db.DB_PATH
+        db.DB_PATH = Path(self.tempdir.name) / "money-test.db"
+        db.init_db()
+
+    def tearDown(self):
+        db.DB_PATH = self.original_path
+        self.tempdir.cleanup()
+
     def test_no_endpoint_is_stranded_without_a_screen(self):
         from app import main
 
@@ -108,9 +121,12 @@ class ApiReachabilityTests(unittest.TestCase):
             route.path for route in main.app.routes
             if getattr(route, "path", "").startswith("/api/")
         }
-        markup = "\n".join(
-            path.read_text() for path in Path("app/templates").glob("*.html")
-        )
+        # Rendered pages, not template source. A fetch written outside its
+        # Jinja block sits in the file and reaches the browser as nothing —
+        # grepping the source called that reachable when the screen was blank.
+        with patch.dict(os.environ, {"MONEY_DISABLE_SCHEDULER": "1"}):
+            with _client() as client:
+                markup = "\n".join(client.get(path).text for path in PAGES)
         stranded = []
         for endpoint in sorted(offered - set(UI_EXEMPT)):
             # Templates build some paths by concatenation, so match the stem.

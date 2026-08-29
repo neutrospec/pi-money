@@ -1337,6 +1337,25 @@ def get_indicator_vintage_points(
     return [dict(row) for row in rows]
 
 
+def vintage_arrivals(indicator: str) -> list[str]:
+    """When each observation date first entered the ledger, in arrival order.
+
+    The ledger holds two very different kinds of row and the difference decides
+    what a replay may claim. A row received on the day it describes proves we
+    had that value then. A row backfilled later proves only what we hold now —
+    but it still proves we held it from the backfill onward, which is why the
+    honest question is not "how deep is this series" but "from which date is it
+    deep enough". This returns the instants that answer it.
+    """
+    with get_conn() as conn:
+        rows = conn.execute(
+            """SELECT MIN(retrieved_at) AS arrived FROM indicator_vintages
+               WHERE indicator = ? GROUP BY date ORDER BY arrived""",
+            (indicator,),
+        ).fetchall()
+    return [row["arrived"] for row in rows]
+
+
 def get_latest_market_daily(
     source: str, dataset: str, *, day: str | None = None
 ) -> dict:

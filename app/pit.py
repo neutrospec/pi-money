@@ -326,3 +326,66 @@ def leak(as_of: str) -> dict:
             "unchecked 는 '깨끗함'이 아니라 '보지 못함'입니다."
         ),
     }
+
+
+def readiness(keys: list[str] | None = None, *, today: date | None = None) -> dict:
+    """From which date each series can be replayed — a fact, not a projection.
+
+    "1 of 7 usable" is a true status and a useless one: it says the answer is
+    no without saying when it becomes yes. But the answer is not a forecast
+    either, because most of this ledger arrived in bulk. 98% of its rows were
+    backfilled rather than received on the day they describe, and a backfill
+    does something precise — it makes every date *after* it replayable at full
+    depth, and no date before it replayable at all.
+
+    So the question "when will there be enough" has an exact answer already in
+    the ledger: the instant its Nth observation arrived, where N is the minimum
+    that series needs. Reporting an accrual rate instead would turn a fact into
+    an estimate and get it wrong in both directions — too pessimistic for the
+    series already backfilled, too optimistic for the ones nothing is feeding.
+    """
+    from app import normalize
+
+    when = today or kst_today()
+    rows = []
+    for key in keys or REGIME_INPUTS:
+        arrivals = db.vintage_arrivals(key)
+        needed = normalize.minimum_for(key)
+        # The instant depth first reached the minimum is simply the arrival of
+        # the Nth observation. Everything from that day onward replays.
+        reached = arrivals[needed - 1][:10] if len(arrivals) >= needed else None
+        rows.append({
+            "key": key,
+            "observations": len(arrivals),
+            "minimum": needed,
+            # Held now, and separately: replayable as of today. A series
+            # backfilled this morning is the second but was not yesterday.
+            "replayable_from": reached,
+            "usable_today": bool(reached and reached <= when.isoformat()),
+            "first_arrival": arrivals[0][:10] if arrivals else None,
+            "note": (
+                f"{reached}부터 재생 가능합니다" if reached
+                else f"관측 {len(arrivals)}개 — {needed}개에 아직 못 미칩니다"
+                if arrivals else "원장이 이 계열을 아직 받지 못했습니다"
+            ),
+        })
+    reached = [item["replayable_from"] for item in rows if item["replayable_from"]]
+    return {
+        "as_of": when.isoformat(),
+        "ledger_began": LEDGER_BEGAN,
+        "usable": sum(1 for item in rows if item["usable_today"]),
+        "requested": len(rows),
+        # The last series to arrive sets when a *full* replay becomes possible.
+        # None while any series is still short — a date computed from the ones
+        # that made it would describe a replay nobody can run.
+        "complete_from": (
+            max(reached) if len(reached) == len(rows) else None
+        ),
+        "waiting": [item["key"] for item in rows if not item["replayable_from"]],
+        "series": rows,
+        "method": (
+            "원장의 N번째 관측이 도착한 시각이 곧 깊이가 채워진 시각입니다. "
+            "이 원장은 98%가 사후 백필이라 속도로 추정하면 이미 채워진 계열은 "
+            "너무 비관적으로, 수집이 멈춘 계열은 너무 낙관적으로 나옵니다."
+        ),
+    }

@@ -18,7 +18,7 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 from app import (
     analysis, brief as brief_module, correlation, coverage, dashboard, db,
-    explain, history_recovery, layers as layers_module, market_metrics,
+    explain, history_recovery, layers as layers_module, market_metrics, pit,
     normalize, registry, sentiment,
     spillover,
 )
@@ -131,6 +131,35 @@ def layers_page(request: Request):
 @app.get("/api/layers")
 def api_layers():
     return layers_module.cards()
+
+
+@app.get("/api/replay/readiness")
+def api_replay_readiness():
+    """From which date each brief input can be replayed. Read by /data."""
+    return pit.readiness()
+
+
+@app.get("/api/replay")
+def api_replay(date: str, mode: str = pit.OBSERVED):
+    """The verdicts this repository could have produced on a past date.
+
+    Kept as an endpoint rather than a screen: the ledger is still too thin for
+    vintage mode to answer, and a screen built now would mostly render "no".
+    /data reports when that changes.
+    """
+    try:
+        return pit.replay(date, mode)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/replay/leak")
+def api_replay_leak(date: str):
+    """What a replay of that date would borrow from the future."""
+    try:
+        return pit.leak(date)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/learn", response_class=HTMLResponse)
