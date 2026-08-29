@@ -1337,6 +1337,51 @@ def get_indicator_vintage_points(
     return [dict(row) for row in rows]
 
 
+def backfill_indicator_vintages(indicator: str) -> int:
+    """Record what we hold now as a vintage, for dates the ledger never saw.
+
+    Deliberate, and not what collection does. ``save_indicator_points`` writes
+    a vintage only when a value *changes*, so a series collected before the
+    ledger existed has years of history in ``indicator_points`` and nothing in
+    ``indicator_vintages``. Re-collecting does not help: the values come back
+    identical, nothing changed, nothing is written, and the replay reports
+    "not enough history" forever while the numbers sit right there.
+
+    The claim this writes is narrow and true: *at this instant we hold V for
+    date D*. It is stamped now and never backdated — backdating would assert
+    we held a value on a day we cannot prove we did, which is precisely the
+    revision leak ``app/pit.py`` exists to catch. Stamping now means the
+    backfill makes every date from today onward replayable and no earlier date
+    replayable, which is exactly what is true.
+
+    What it does not buy: revision detection. Until real revisions accrue after
+    the backfill, vintage mode returns what observed mode returns for this
+    series. It buys depth, so the distribution can be scored at all.
+
+    Only dates with no vintage row at all are written. A date the ledger
+    already witnessed keeps its own record; overwriting that with today's value
+    would destroy the one thing the ledger is for.
+    """
+    now = utc_now()
+    with get_conn() as conn:
+        rows = conn.execute(
+            """SELECT p.date, p.value, p.source FROM indicator_points p
+               WHERE p.indicator = ? AND NOT EXISTS (
+                   SELECT 1 FROM indicator_vintages v
+                   WHERE v.indicator = p.indicator AND v.date = p.date
+               )""",
+            (indicator,),
+        ).fetchall()
+        conn.executemany(
+            """INSERT OR IGNORE INTO indicator_vintages
+               (indicator, date, retrieved_at, value, source)
+               VALUES (?, ?, ?, ?, ?)""",
+            [(indicator, row["date"], now, row["value"], row["source"])
+             for row in rows],
+        )
+    return len(rows)
+
+
 def vintage_arrivals(indicator: str) -> list[str]:
     """When each observation date first entered the ledger, in arrival order.
 

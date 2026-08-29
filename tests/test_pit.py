@@ -12,6 +12,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from app import analysis, db, market_metrics, normalize, pit
+from app.timeutil import kst_today
 
 
 class TemporaryDatabaseTest(unittest.TestCase):
@@ -124,6 +125,58 @@ class ReadinessTests(TemporaryDatabaseTest):
         depth = len(db.get_indicator_vintage_points(
             "us_vix", as_of=pit._instant(row["replayable_from"])))
         self.assertGreaterEqual(depth, needed, "reported date cannot replay")
+
+
+class BackfillTests(TemporaryDatabaseTest):
+    """A deliberate snapshot of what we hold, stamped now and never backdated."""
+
+    def test_a_series_with_history_and_no_ledger_gets_one_row_per_date(self):
+        points = [{"date": f"2026-07-{day:02d}", "value": float(day)}
+                  for day in range(1, 11)]
+        db.save_indicator_points("us_vix", points)
+        with db.get_conn() as conn:
+            conn.execute("DELETE FROM indicator_vintages")
+        self.assertEqual(10, db.backfill_indicator_vintages("us_vix"))
+        self.assertEqual(
+            [float(day) for day in range(1, 11)],
+            [item["value"] for item in pit.Ledger(
+                "2026-08-29", pit.VINTAGE).indicator("us_vix")],
+        )
+
+    def test_it_is_stamped_now_so_no_earlier_date_becomes_replayable(self):
+        # Backdating would assert we held a value on a day we cannot prove we
+        # did — the exact revision leak this module exists to catch.
+        db.save_indicator_points("us_vix", [{"date": "2026-07-01", "value": 14.0}])
+        with db.get_conn() as conn:
+            conn.execute("DELETE FROM indicator_vintages")
+        db.backfill_indicator_vintages("us_vix")
+        self.assertEqual([], pit.Ledger("2026-07-02", pit.VINTAGE).indicator("us_vix"))
+        self.assertEqual(
+            1, len(pit.Ledger(kst_today().isoformat(), pit.VINTAGE).indicator("us_vix"))
+        )
+
+    def test_a_date_the_ledger_already_witnessed_is_left_alone(self):
+        # That record is the only thing the ledger is for; replacing it with
+        # today's value would erase the revision it exists to prove.
+        db.save_indicator_points("us_vix", [{"date": "2026-07-01", "value": 20.0}])
+        with db.get_conn() as conn:
+            conn.execute("DELETE FROM indicator_vintages")
+        self.vintage("us_vix", "2026-07-01", 14.0, "2026-07-01T09:00:00+00:00")
+        self.assertEqual(0, db.backfill_indicator_vintages("us_vix"))
+        self.assertEqual(
+            14.0,
+            pit.Ledger("2026-07-02", pit.VINTAGE).indicator("us_vix")[0]["value"],
+        )
+
+    def test_running_it_twice_writes_nothing_the_second_time(self):
+        db.save_indicator_points("us_vix", [
+            {"date": "2026-07-01", "value": 14.0},
+            {"date": "2026-07-02", "value": 15.0},
+        ])
+        with db.get_conn() as conn:
+            conn.execute("DELETE FROM indicator_vintages")
+        self.assertEqual(2, db.backfill_indicator_vintages("us_vix"))
+        self.assertEqual(0, db.backfill_indicator_vintages("us_vix"))
 
 
 class ObservationDateTests(TemporaryDatabaseTest):

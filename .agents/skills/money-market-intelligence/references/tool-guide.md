@@ -98,9 +98,12 @@ is a publication schedule nobody controls.
   reads as though we always had the correction.
 - `vintage` uses only values received by the end of that day, so it also
   catches revision. Only `indicator_vintages` supports it, and only from
-  2026-08-23. Call `market_replay_readiness` first: most inputs still hold
-  about five vintage observations against a minimum of sixty, and their
-  replayed components report as pending rather than guessing.
+  2026-08-23. Call `market_replay_readiness` first — it reports the date each
+  series became replayable, and a series still short reports its components as
+  pending rather than guessing. Every brief input became replayable on
+  2026-08-29 through a deliberate backfill, which bought depth and not
+  retroactive revision detection: until revisions accrue after that date,
+  vintage mode returns what observed mode returns.
 - Index prices, KRX bulk tables, and the catalogue's own contents cannot be
   reconstructed at all. The leak report lists them under `unchecked`, which
   means "not looked at", never "clean".
