@@ -161,7 +161,30 @@
         ·
         {% endif %}
         {{ t.date }} · {{ t.frequency }}
+        {%- if t.explain.position.available %} · 분포 {{ t.explain.position.percentile | round(0) | int }}%{% endif %}
       </div>
+      {# The same tile, opened further. An analyst stops at the number above;
+         someone meeting this series reads on. One artefact, no second page
+         to keep in sync. #}
+      <details class="learn">
+        <summary>?</summary>
+        {% if t.explain.now %}<p class="now">{{ t.explain.now }}</p>{% endif %}
+        {% for name in ['what', 'why', 'how'] if t.explain.layers.get(name) %}
+        <p><b>{{ layer_labels[name] }}</b> {{ t.explain.layers[name] }}</p>
+        {% endfor %}
+        {% if t.explain.watch %}
+        <p><b>{{ layer_labels['watch'] }}</b>
+          {% for w in t.explain.watch %}<a href="/charts?key={{ w.key }}">{{ w.label }}</a>({{ w.why }}){% if not loop.last %} · {% endif %}{% endfor %}
+        </p>
+        {% endif %}
+        {% if t.explain.layers.get('caveat') %}
+        <p><b>{{ layer_labels['caveat'] }}</b> {{ t.explain.layers.caveat }}</p>
+        {% endif %}
+        {% if t.explain.fallback %}
+        <p class="stand-in">이 설명은 이 지표 고유가 아니라 같은 분류의 공통 설명입니다. {{ t.explain.summary }}</p>
+        {% endif %}
+        <p class="src">출처 {{ t.explain.source }}{% if t.explain.source_url %} · <a href="{{ t.explain.source_url }}" target="_blank" rel="noopener">원계열</a>{% endif %} · <a href="/charts?key={{ t.key }}">차트</a></p>
+      </details>
     </div>
     {% endfor %}
   </div>

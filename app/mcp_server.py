@@ -12,7 +12,7 @@ from datetime import timedelta
 from mcp.server import MCPServer
 
 from app import (
-    analysis, correlation, coverage, dashboard, db, history_recovery,
+    analysis, correlation, coverage, dashboard, db, explain, history_recovery,
     market_metrics, normalize, sentiment as sentiment_gauge,
     spillover as spillover_analysis,
 )
@@ -287,6 +287,7 @@ def market_indicator(key: str, limit: int = 24) -> dict:
         "proxy": spec["proxy"],
         "description": indicators.indicator_description(key),
         "position": normalize.position_for(key),
+        "explanation": explain.explain(key),
         "latest_date": points[-1]["date"] if points else None,
         "retrieved_at": stored.get("retrieved_at"),
         "points": points,

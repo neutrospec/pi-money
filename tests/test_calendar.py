@@ -14,7 +14,7 @@ import numpy as np
 
 from app import (
     analysis, backup, correlation, db, history_recovery, market_metrics,
-    dashboard, normalize, registry, sentiment, spillover,
+    dashboard, explain, normalize, registry, sentiment, spillover,
 )
 from app.collectors import curated, indicators, krx
 from app.scheduler import Collector, Scheduler
@@ -516,6 +516,114 @@ class NormalizationEngineTests(TemporaryDatabaseTest):
     def test_ties_count_as_not_below(self):
         self.assertEqual(0.0, normalize.percentile(1.0, [1.0, 1.0], invert=False))
         self.assertEqual(100.0, normalize.percentile(1.0, [1.0, 1.0], invert=True))
+
+
+class LearningLayerTests(TemporaryDatabaseTest):
+    """One artefact, two readers: the analyst's number and the beginner's why."""
+
+    def test_every_core_series_teaches_rather_than_labels(self):
+        """A frame seeded part-way is the old state wearing the new UI.
+
+        168 series shared 47 category blurbs before this. Coverage that looks
+        complete because a category line stands in for an explanation is the
+        pathology, so the core set must be written per key — and a future
+        core promotion has to fail here rather than silently fall back.
+        """
+        catalog = indicators.catalog()
+        core = [key for key, spec in catalog.items() if spec["priority"] == "core"]
+        missing = [key for key in core if key not in indicators.EXPLANATIONS]
+        self.assertEqual([], missing)
+        for key in core:
+            with self.subTest(key=key):
+                written = indicators.EXPLANATIONS[key]
+                for field in ("what", "why", "how", "watch", "caveat"):
+                    self.assertTrue(written.get(field), f"{key}.{field}")
+
+    def test_watch_references_are_real_catalog_keys(self):
+        """The linkage seed must be followable, not prose gesturing at a topic."""
+        catalog = indicators.catalog()
+        for key, written in indicators.EXPLANATIONS.items():
+            for target, why in written["watch"]:
+                with self.subTest(key=key, target=target):
+                    self.assertIn(target, catalog)
+                    self.assertNotEqual(target, key)
+                    self.assertTrue(why.strip())
+
+    def test_written_layers_are_stable_while_the_now_layer_moves(self):
+        """The split that keeps a written explanation from going stale.
+
+        A documented threshold ("−0.7 아래") belongs in the written layers and
+        must not change with the data. Today's reading must never be written
+        there — it is composed at render time, so it moves when the series
+        does. Testing the two properties together is what pins the boundary.
+        """
+        db.init_db()
+
+        def observe(value: float) -> dict:
+            db.save_indicator_points(
+                "kr_vkospi",
+                [
+                    {"date": (date(2024, 1, 1) + timedelta(days=i)).isoformat(),
+                     "value": 20.0}
+                    for i in range(200)
+                ] + [{"date": "2026-08-25", "value": value}],
+                "krx",
+            )
+            return explain.explain("kr_vkospi")
+
+        calm, panicked = observe(18.0), observe(85.0)
+
+        self.assertEqual(calm["layers"], panicked["layers"])
+        self.assertEqual(calm["watch"], panicked["watch"])
+        self.assertNotEqual(calm["now"], panicked["now"])
+        self.assertIn("18.0", calm["now"])
+        self.assertIn("85.0", panicked["now"])
+
+    def test_proxy_series_declare_it_where_a_beginner_will_read_it(self):
+        """A guardrail buried in SKILL.md does not reach the person reading a tile."""
+        catalog = indicators.catalog()
+        proxies = [
+            key for key in indicators.EXPLANATIONS if catalog[key]["proxy"]
+        ]
+        self.assertTrue(proxies)
+        for key in proxies:
+            with self.subTest(key=key):
+                self.assertIn("proxy", indicators.EXPLANATIONS[key]["caveat"])
+
+    def test_now_is_generated_from_the_live_distribution(self):
+        db.init_db()
+        db.save_indicator_points(
+            "kr_vkospi",
+            [
+                {"date": (date(2024, 1, 1) + timedelta(days=i)).isoformat(),
+                 "value": 20.0 if i < 200 else 70.0}
+                for i in range(260)
+            ],
+            "krx",
+        )
+        composed = explain.explain("kr_vkospi")
+        reading = normalize.position_for("kr_vkospi")
+
+        self.assertIsNotNone(composed["now"])
+        self.assertIn(str(reading["value"]), composed["now"])
+        self.assertIn(reading["window_label"], composed["now"])
+        self.assertIn(reading["as_of"], composed["now"])
+
+    def test_a_series_without_its_own_explanation_says_so(self):
+        db.init_db()
+        composed = explain.explain("kr_ppi")
+        self.assertTrue(composed["fallback"])
+        self.assertEqual({}, composed["layers"])
+        self.assertTrue(composed["summary"])   # the category stand-in is still shown
+
+    def test_guides_are_served_from_the_repository_files(self):
+        """No web transcription to drift from the written source."""
+        for item in explain.GUIDES:
+            with self.subTest(slug=item["slug"]):
+                loaded = explain.guide(item["slug"])
+                self.assertFalse(loaded["missing"])
+                self.assertIn("#", loaded["body"])
+        self.assertIsNone(explain.guide("does-not-exist"))
 
 
 class KoreaRegimeTests(TemporaryDatabaseTest):

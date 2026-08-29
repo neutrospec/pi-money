@@ -17,7 +17,7 @@ from fastapi.templating import Jinja2Templates
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 from app import (
-    analysis, correlation, coverage, dashboard, db, history_recovery,
+    analysis, correlation, coverage, dashboard, db, explain, history_recovery,
     market_metrics, normalize, registry, sentiment, spillover,
 )
 from app.collectors import indices, indicators, krx, watchlist
@@ -91,7 +91,28 @@ def situation_page(request: Request):
     """Render the market state from cache, without a client round trip."""
     return templates.TemplateResponse(
         request, "index.html",
-        {"situation": dashboard.situation(), "active": "home"},
+        {
+            "situation": dashboard.situation(),
+            "layer_labels": explain.LAYER_LABELS,
+            "active": "home",
+        },
+    )
+
+
+@app.get("/learn", response_class=HTMLResponse)
+def learn_page(request: Request):
+    """The written guides, served from the repository files themselves.
+
+    They existed all along and were reachable only by opening the repo, which
+    is the wrong place for someone trying to read a number on a screen.
+    """
+    return templates.TemplateResponse(
+        request, "learn.html",
+        {
+            "guides": [explain.guide(item["slug"]) for item in explain.GUIDES],
+            "cov": explain.coverage(),
+            "active": "learn",
+        },
     )
 
 
@@ -594,6 +615,10 @@ def api_indicator(
         # Additive and self-describing: unavailable readings carry the reason
         # rather than a number nobody should trust.
         "position": normalize.position_for(key),
+        # The teaching layers. ``fallback`` says whether this is the series'
+        # own explanation or the category stand-in, so the interface can be
+        # honest about which it is showing.
+        "explanation": explain.explain(key),
         "latest_date": points[-1]["date"] if points else None,
         "retrieved_at": stored.get("retrieved_at"),
         "cached": True,

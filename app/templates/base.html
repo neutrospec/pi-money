@@ -49,6 +49,29 @@
   .pos { color:#58a6ff; } .neg { color:#f0883e; }
   .sig-ok { color:#3fb950; } .sig-warn { color:#d29922; } .sig-danger { color:#f85149; }
   .sig-muted { color:#6e7681; }
+  /* Progressive disclosure: the tile is complete without opening this, and
+     opening it never moves the reader to another page. */
+  details.learn { margin-top:8px; border-top:1px solid #21262d; padding-top:6px; }
+  details.learn > summary { cursor:pointer; color:#6e7681; font-size:11px;
+    list-style:none; width:18px; height:18px; line-height:18px; text-align:center;
+    border:1px solid #30363d; border-radius:50%; }
+  details.learn > summary::-webkit-details-marker { display:none; }
+  details.learn[open] > summary { color:#e6edf3; border-color:#388bfd; }
+  details.learn p { font-size:12px; color:#c9d1d9; margin:8px 0; line-height:1.55; }
+  details.learn p b { color:#8b949e; font-weight:600; margin-right:4px; }
+  details.learn p.now { color:#e6edf3; background:#0d1117; border-left:2px solid #388bfd;
+    padding:7px 9px; border-radius:0 4px 4px 0; }
+  details.learn p.stand-in { color:#d29922; }
+  details.learn p.src { color:#6e7681; font-size:11px; }
+  details.learn code { background:#0d1117; padding:1px 4px; border-radius:3px; }
+  .guide h2 { font-size:16px; margin:18px 0 8px; }
+  .guide h3, .guide h4 { font-size:14px; margin:14px 0 6px; color:#8b949e; }
+  .guide p { font-size:13px; line-height:1.65; margin:8px 0; color:#c9d1d9; }
+  .guide ul { margin:8px 0 8px 18px; }
+  .guide li { font-size:13px; line-height:1.65; margin:4px 0; color:#c9d1d9; }
+  .guide code { background:#0d1117; padding:1px 4px; border-radius:3px; font-size:12px; }
+  .guide pre { background:#0d1117; padding:10px; border-radius:6px; overflow-x:auto; }
+  .guide p.tablerow { font-family:ui-monospace,monospace; font-size:12px; color:#8b949e; margin:2px 0; }
   /* Two regime verdicts sit side by side so a disagreement is visible at
      a glance; they stack on narrow screens rather than shrinking. */
   .regime-pair { display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr));
@@ -91,6 +114,7 @@
       <a href="/analysis" {% if active in ('analysis','correlation','spillover') %}class="active"{% endif %}>분석</a>
       <a href="/data" {% if active in ('data','manage') %}class="active"{% endif %}>데이터</a>
       <a href="/calendar" {% if active=='calendar' %}class="active"{% endif %}>일정</a>
+      <a href="/learn" {% if active=='learn' %}class="active"{% endif %}>배우기</a>
     </nav>
   </div>
   <div class="main">

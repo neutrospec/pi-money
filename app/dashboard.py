@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-from app import analysis, db, market_metrics, sentiment
+from app import analysis, db, explain, market_metrics, sentiment
 from app.collectors import indicators, indices
 from app.timeutil import kst_today, to_kst
 
@@ -80,6 +80,9 @@ def _tile(
         "direction": direction,
         "frequency": spec["frequency"],
         "proxy": spec["proxy"],
+        # Carried on the tile so the reader can open the explanation where
+        # the number is, without navigating away from the picture.
+        "explain": explain.explain(key),
     }
 
 

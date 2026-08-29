@@ -36,7 +36,7 @@ args: --directory /Users/nobocop/projects/money run python -m app.mcp_server
 | `market_quotes` | 관심 종목의 마지막 수집 시세 |
 | `market_indices` | 글로벌 지수 심볼·시장 관측일·수집 시각 |
 | `market_indicator_list` | 지표 키·출처·빈도·최신 관측일 발견 |
-| `market_indicator` | 지표 메타데이터·최근 관측값과 `position`(자체 분포에서의 위치·관측 창·위험 방향) |
+| `market_indicator` | 지표 메타데이터·최근 관측값, `position`(자체 분포 위치·관측 창·위험 방향), `explanation`(설명 층·연관 계열·생성된 현재 값 해석) |
 | `market_universe` | KRX 등 공급자에서 자동 발견한 전체 종목 검색 |
 | `market_correlation` | 수익률 롤링·시차 상관과 표본 진단 |
 | `market_spillover` | generalized FEVD 연결성과 표시용 핵심 간선 |
