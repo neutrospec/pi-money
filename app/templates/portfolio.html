@@ -106,71 +106,118 @@
 
   <div class="card">
     <div class="card-title">입력</div>
-    <div id="msg" style="font-size:13px;margin-bottom:12px;"></div>
+    <div class="card-sub">이 컴퓨터에서만 받습니다. 계좌번호는 저장하지 않습니다.</div>
+    <div id="msg" class="note" style="min-height:18px;"></div>
 
-    <details class="learn" {% if p.empty %}open{% endif %}><summary>계좌 추가</summary>
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin:10px 0;">
-        <label>이름<input id="acLabel" placeholder="예: 연금저축(주력)"></label>
-        <label>기관<input id="acInst" placeholder="예: OO증권"></label>
-        <label>유형<select id="acType">
-          {% for key, name in types.items() %}<option value="{{ key }}">{{ name }}</option>{% endfor %}
-        </select></label>
-        <label>개설일<input id="acOpened" placeholder="2020-01-02"></label>
-        <label>세법상 가입일<input id="acTax" placeholder="계약이전 시 승계된 날"></label>
-        <label>통화<input id="acCur" value="KRW"></label>
-      </div>
-      <button onclick="addAccount()">추가</button>
-      <div style="font-size:11px;color:#6e7681;margin-top:8px;">계좌번호 입력란은 없습니다. 저장하지 않기 때문입니다.</div>
-    </details>
-
-    <details class="learn"><summary>보유 스냅샷 붙여넣기</summary>
-      <div style="display:flex;flex-wrap:wrap;gap:10px;margin:10px 0;">
-        <label>계좌<select id="hAccount">
-          {% for a in p.accounts %}<option value="{{ a.id }}">{{ a.label }}</option>{% endfor %}
-        </select></label>
-        <label>기준일<input id="hAsOf" placeholder="{{ p.as_of }}" value="{{ p.as_of }}"></label>
-      </div>
-      <textarea id="hCsv" rows="8" style="width:100%;font-family:monospace;font-size:12px;"
-        placeholder="source,dataset,symbol,name,quantity,book_amount,stated_value,currency,is_risky_asset,note
-krx,etf_bydd_trd,069500,KODEX 200,10,,,KRW,1,
-,,예금,수시입출금,,,3000000,KRW,0,"></textarea>
-      <div style="margin-top:8px;">
-        <button onclick="importHoldings(true)">미리보기</button>
-        <button onclick="importHoldings(false)">적재</button>
-      </div>
-      <div style="font-size:11px;color:#d29922;margin-top:8px;">
-        같은 (계좌, 기준일)은 <b>전량 교체</b>됩니다 — 남기고 싶은 종목도 전부 포함하세요.
-        <code>is_risky_asset</code>을 비워두면 <b>미상</b>으로 남고, 미상은 안전으로 세지 않습니다.
+    <details class="form" {% if p.empty %}open{% endif %}>
+      <summary>계좌 추가</summary>
+      <div class="form-body">
+        <div class="fields">
+          <label class="field"><span>이름</span>
+            <input id="acLabel" placeholder="연금저축(주력)"></label>
+          <label class="field"><span>기관</span>
+            <input id="acInst" placeholder="OO증권"></label>
+          <label class="field"><span>유형</span>
+            <select id="acType">
+              {% for key, name in types.items() %}<option value="{{ key }}">{{ name }}</option>{% endfor %}
+            </select></label>
+          <label class="field"><span>통화</span>
+            <input id="acCur" value="KRW"></label>
+          <label class="field"><span>개설일</span>
+            <input id="acOpened" placeholder="2020-01-02">
+            <span class="hint">선택</span></label>
+          <label class="field"><span>세법상 가입일</span>
+            <input id="acTax" placeholder="2018-03-15">
+            <span class="hint">계약이전 시 승계된 날. 비우면 개설일과 같게 둡니다</span></label>
+        </div>
+        <div class="actions"><button class="primary" onclick="addAccount()">계좌 추가</button></div>
+        <div class="note">계좌번호 입력란이 없는 것은 실수가 아니라 설계입니다 — 저장하지 않습니다.</div>
       </div>
     </details>
 
-    <details class="learn"><summary>입출금</summary>
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:10px 0;">
-        <label>계좌<select id="fAccount">
-          {% for a in p.accounts %}<option value="{{ a.id }}">{{ a.label }}</option>{% endfor %}
-        </select></label>
-        <label>날짜<input id="fDate" value="{{ p.as_of }}"></label>
-        <label>종류<select id="fKind">
-          {% for key, name in kinds.items() %}<option value="{{ key }}">{{ name }}</option>{% endfor %}
-        </select></label>
-        <label>금액<input id="fAmount" placeholder="1000000"></label>
-      </div>
-      <button onclick="addFlow()">기록</button>
-      <div style="font-size:11px;color:#6e7681;margin-top:8px;">
-        이전 입금은 일반 입금과 따로 셉니다 — ISA 만기자금의 연금계좌 전환은 납입한도에 들어가지 않습니다.
+    <details class="form">
+      <summary>보유 스냅샷 붙여넣기</summary>
+      <div class="form-body">
+        {% if p.empty %}
+        <div class="note warn">계좌를 먼저 추가하세요.</div>
+        {% else %}
+        <div class="fields">
+          <label class="field"><span>계좌</span>
+            <select id="hAccount">
+              {% for a in p.accounts %}<option value="{{ a.id }}">{{ a.label }} ({{ a.institution }})</option>{% endfor %}
+            </select></label>
+          <label class="field"><span>기준일</span>
+            <input id="hAsOf" value="{{ p.as_of }}"></label>
+        </div>
+        <label class="field" style="margin-bottom:10px;"><span>CSV</span>
+          <textarea id="hCsv" rows="9" spellcheck="false"
+            placeholder="source,dataset,symbol,name,quantity,book_amount,stated_value,currency,is_risky_asset,note&#10;krx,etf_bydd_trd,069500,KODEX 200,10,,,KRW,1,&#10;,,예금,수시입출금,,,3000000,KRW,0,"></textarea></label>
+        <div class="actions">
+          <button onclick="importHoldings(true)">미리보기</button>
+          <button class="primary" onclick="importHoldings(false)">적재</button>
+        </div>
+        <div class="note warn">
+          같은 (계좌, 기준일)은 <b>전량 교체</b>됩니다 — 남길 종목도 전부 포함하세요.
+          미리보기로 무엇이 지워지는지 먼저 확인하는 것을 권합니다.
+        </div>
+        <div class="note">
+          국내 상장 종목은 <code>source=krx</code>와 데이터셋을 적으면 가격이 붙습니다
+          (<code>stk_bydd_trd</code> 코스피, <code>ksq_bydd_trd</code> 코스닥,
+          <code>etf_bydd_trd</code> ETF). 예금·해외자산처럼 값을 붙일 수 없는 것은
+          앞 두 칸을 비우고 <code>stated_value</code>에 직접 적으세요.
+          <code>is_risky_asset</code>을 비우면 <b>미상</b>으로 남습니다 — 안전으로 세지 않습니다.
+        </div>
+        {% endif %}
       </div>
     </details>
 
-    <details class="learn"><summary>노출 태그</summary>
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:10px 0;">
-        <label>source<input id="tSource" value="krx"></label>
-        <label>dataset<input id="tDataset" placeholder="etf_bydd_trd"></label>
-        <label>symbol<input id="tSymbol" placeholder="069500"></label>
-        <label>태그<select id="tTag">
-          {% for key, name in tags.items() %}<option value="{{ key }}">{{ name }}</option>{% endfor %}
-        </select></label>
+    <details class="form">
+      <summary>입출금</summary>
+      <div class="form-body">
+        {% if p.empty %}
+        <div class="note warn">계좌를 먼저 추가하세요.</div>
+        {% else %}
+        <div class="fields">
+          <label class="field"><span>계좌</span>
+            <select id="fAccount">
+              {% for a in p.accounts %}<option value="{{ a.id }}">{{ a.label }}</option>{% endfor %}
+            </select></label>
+          <label class="field"><span>날짜</span>
+            <input id="fDate" value="{{ p.as_of }}"></label>
+          <label class="field"><span>종류</span>
+            <select id="fKind">
+              {% for key, name in kinds.items() %}<option value="{{ key }}">{{ name }}</option>{% endfor %}
+            </select></label>
+          <label class="field"><span>금액</span>
+            <input id="fAmount" placeholder="1000000" inputmode="numeric"></label>
+        </div>
+        <div class="actions"><button class="primary" onclick="addFlow()">기록</button></div>
+        <div class="note">
+          이전 입금은 일반 입금과 따로 셉니다 — ISA 만기자금의 연금계좌 전환은
+          납입한도에 들어가지 않기 때문입니다.
+        </div>
+        {% endif %}
       </div>
-      <button onclick="addTag()">저장</button>
+    </details>
+
+    <details class="form">
+      <summary>노출 태그</summary>
+      <div class="form-body">
+        <div class="fields">
+          <label class="field"><span>source</span><input id="tSource" value="krx"></label>
+          <label class="field"><span>dataset</span><input id="tDataset" placeholder="etf_bydd_trd"></label>
+          <label class="field"><span>symbol</span><input id="tSymbol" placeholder="069500"></label>
+          <label class="field"><span>노출 축</span>
+            <select id="tTag">
+              {% for key, name in tags.items() %}<option value="{{ key }}">{{ name }}</option>{% endfor %}
+            </select></label>
+        </div>
+        <div class="actions"><button class="primary" onclick="addTag()">저장</button></div>
+        <div class="note">
+          종목이 무엇의 노출인지는 확인하신 것만 기록합니다. 23거래일 이력으로
+          상관관계에서 추정하면 잡음을 맞추는 일이 됩니다.
+        </div>
+      </div>
     </details>
   </div>
 
@@ -183,23 +230,26 @@ krx,etf_bydd_trd,069500,KODEX 200,10,,,KRW,1,
     el.style.color = bad ? '#f85149' : '#3fb950';
   }
   async function send(path, body) {
-    const r = await fetch(path, {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json', [HEADER]: TOKEN},
-      body: JSON.stringify(body),
-    });
-    const data = await r.json().catch(() => ({}));
-    if (!r.ok) { say(data.detail || ('오류 ' + r.status), true); return null; }
-    return data;
+    try {
+      const r = await fetch(path, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', [HEADER]: TOKEN},
+        body: JSON.stringify(body),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) { say(data.detail || ('오류 ' + r.status), true); return null; }
+      return data;
+    } catch (err) { say('서버에 닿지 못했습니다: ' + err, true); return null; }
   }
-  function val(id) { return document.getElementById(id).value.trim(); }
+  function val(id) { const el = document.getElementById(id); return el ? el.value.trim() : ''; }
   async function addAccount() {
+    if (!val('acLabel') || !val('acInst')) { say('이름과 기관은 필요합니다.', true); return; }
     const d = await send('/api/portfolio/account', {
       label: val('acLabel'), institution: val('acInst'),
       account_type: val('acType'), opened_on: val('acOpened'),
       tax_opened_on: val('acTax'), currency: val('acCur'),
     });
-    if (d) { say('계좌 ' + d.id + ' 추가됨'); setTimeout(() => location.reload(), 600); }
+    if (d) { say('계좌 ' + d.id + ' 추가됨'); setTimeout(() => location.reload(), 700); }
   }
   async function importHoldings(preview) {
     const d = await send('/api/portfolio/holdings', {
@@ -208,13 +258,14 @@ krx,etf_bydd_trd,069500,KODEX 200,10,,,KRW,1,
     });
     if (!d) return;
     if (preview) {
-      say('미리보기: 기존 ' + d.would_remove + '행 삭제 → ' + d.would_add + '행 적재');
+      say('미리보기 — 기존 ' + d.would_remove + '행을 지우고 ' + d.would_add + '행을 넣습니다. 적재를 누르면 실행됩니다.');
     } else {
-      say(d.removed + '행 교체 → ' + d.added + '행');
-      setTimeout(() => location.reload(), 600);
+      say(d.removed + '행 교체 → ' + d.added + '행 적재됨');
+      setTimeout(() => location.reload(), 700);
     }
   }
   async function addFlow() {
+    if (!val('fAmount')) { say('금액이 필요합니다.', true); return; }
     const d = await send('/api/portfolio/flow', {
       account_id: val('fAccount'), date: val('fDate'),
       kind: val('fKind'), amount: val('fAmount'),
@@ -222,6 +273,7 @@ krx,etf_bydd_trd,069500,KODEX 200,10,,,KRW,1,
     if (d) say('기록됨');
   }
   async function addTag() {
+    if (!val('tDataset') || !val('tSymbol')) { say('dataset 과 symbol 이 필요합니다.', true); return; }
     const d = await send('/api/portfolio/tag', {
       source: val('tSource'), dataset: val('tDataset'),
       symbol: val('tSymbol'), tag: val('tTag'),

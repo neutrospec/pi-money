@@ -111,6 +111,55 @@ class PageRenderTests(unittest.TestCase):
             self.assertIn(path, linked, f"{path} is not linked from any page")
 
 
+class FormStyleTests(unittest.TestCase):
+    """A control the stylesheet has never heard of renders as a raw box.
+
+    The web layer was GET-only until 2026-08-30, so nothing had ever styled an
+    input. The first form shipped with labels running into their fields and
+    每 disclosure summary rendering one character per line, because it reused
+    ``details.learn`` — an 18-pixel circle meant for a per-tile footnote.
+    Neither failure is visible to a test that only checks for a 200.
+    """
+
+    def markup(self):
+        return "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in Path("app/templates").glob("*.html")
+        )
+
+    def test_every_rendered_control_has_a_style_rule(self):
+        styles = Path("app/templates/base.html").read_text(encoding="utf-8")
+        markup = self.markup()
+        for element in ("input", "select", "textarea", "button"):
+            if f"<{element}" not in markup:
+                continue
+            self.assertRegex(
+                styles, rf"(^|[,\s]){element}\s*[,{{]",
+                f"<{element}> is rendered but the stylesheet never styles it",
+            )
+
+    def test_a_form_disclosure_does_not_reuse_the_footnote_class(self):
+        # details.learn styles its summary as an 18x18 circle. A form section
+        # inside one squeezes its heading to one character per line.
+        for path in Path("app/templates").glob("*.html"):
+            body = path.read_text(encoding="utf-8")
+            for chunk in body.split('<details class="learn"')[1:]:
+                head = chunk.split("</details>")[0]
+                for element in ("<input", "<select", "<textarea", "<button"):
+                    self.assertNotIn(
+                        element, head,
+                        f"{path.name}: form control inside details.learn — "
+                        f"use details.form, whose summary is full width",
+                    )
+
+    def test_a_field_label_is_a_block_not_inline_text(self):
+        # "이름예: 연금저축(주력)" was the symptom: label text and its input
+        # sharing a line with nothing separating them.
+        styles = Path("app/templates/base.html").read_text(encoding="utf-8")
+        self.assertIn(".field", styles)
+        self.assertRegex(styles, r"\.field\s*{[^}]*flex-direction:\s*column")
+
+
 class ApiReachabilityTests(unittest.TestCase):
     """Every endpoint should be reachable from the UI or explicitly exempt."""
 

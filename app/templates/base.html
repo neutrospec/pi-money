@@ -49,6 +49,51 @@
   .pos { color:#58a6ff; } .neg { color:#f0883e; }
   .sig-ok { color:#3fb950; } .sig-warn { color:#d29922; } .sig-danger { color:#f85149; }
   .sig-muted { color:#6e7681; }
+  /* Forms. The web layer was GET-only until 2026-08-30, so nothing here had
+     ever styled an input; the first form rendered as unlabelled boxes with
+     text running into them. These are the minimum that makes a field legible:
+     the label owns its own line, the control fills its column, and the whole
+     thing lays out on a grid that reflows instead of overflowing. */
+  .fields { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr));
+            gap:14px; margin:14px 0; }
+  .field { display:flex; flex-direction:column; gap:5px; min-width:0; }
+  .field > span { font-size:12px; color:#8b949e; }
+  .field .hint { font-size:11px; color:#6e7681; }
+  input, select, textarea {
+    background:#0d1117; color:#e6edf3; border:1px solid #30363d;
+    border-radius:6px; padding:8px 10px; font-size:13px; font-family:inherit;
+    width:100%; box-sizing:border-box;
+  }
+  input:focus, select:focus, textarea:focus { outline:none; border-color:#388bfd; }
+  input::placeholder, textarea::placeholder { color:#484f58; }
+  textarea { font-family:ui-monospace,monospace; font-size:12px; line-height:1.5;
+             resize:vertical; }
+  button {
+    background:#21262d; color:#e6edf3; border:1px solid #30363d;
+    border-radius:6px; padding:8px 16px; font-size:13px; font-family:inherit;
+    cursor:pointer;
+  }
+  button:hover { background:#30363d; border-color:#484f58; }
+  button.primary { background:#1f6feb; border-color:#1f6feb; }
+  button.primary:hover { background:#388bfd; border-color:#388bfd; }
+  .actions { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  /* A form section is a full-width disclosure, unlike details.learn which is
+     an 18px circle for a per-tile footnote. Reusing that class here rendered
+     each summary one character per line. */
+  details.form { border:1px solid #21262d; border-radius:8px; margin-bottom:10px; }
+  details.form > summary {
+    cursor:pointer; padding:10px 14px; font-size:14px; font-weight:600;
+    color:#c9d1d9; list-style:none; display:flex; align-items:center; gap:8px;
+  }
+  details.form > summary::-webkit-details-marker { display:none; }
+  details.form > summary::before { content:"▸"; color:#6e7681; font-size:12px; }
+  details.form[open] > summary::before { content:"▾"; color:#58a6ff; }
+  details.form > summary:hover { background:#1c2128; }
+  details.form[open] > summary { border-bottom:1px solid #21262d; }
+  .form-body { padding:0 14px 14px; }
+  .note { font-size:11px; color:#6e7681; line-height:1.6; margin-top:10px; }
+  .note.warn { color:#d29922; }
+
   /* Progressive disclosure: the tile is complete without opening this, and
      opening it never moves the reader to another page. */
   details.learn { margin-top:8px; border-top:1px solid #21262d; padding-top:6px; }
