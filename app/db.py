@@ -17,7 +17,7 @@ load_dotenv(PROJECT_ROOT / ".env")
 
 DEFAULT_DB_PATH = PROJECT_ROOT / "data" / "money.db"
 DB_PATH = Path(os.environ.get("MONEY_DB_PATH", DEFAULT_DB_PATH))
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS events (
@@ -58,6 +58,117 @@ CREATE TABLE IF NOT EXISTS indicator_vintages (
     source TEXT,
     PRIMARY KEY (indicator, date, retrieved_at)
 );
+
+-- Accounts and holdings. This repository is public and only ``data/`` is
+-- ignored, so everything about the owner's money lives here and nowhere in a
+-- committed file. Two consequences are structural rather than incidental:
+-- no account number is stored at all, and no table holds a single total.
+CREATE TABLE IF NOT EXISTS accounts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    label TEXT NOT NULL,
+    institution TEXT NOT NULL,
+    account_type TEXT NOT NULL,
+    -- Kept apart because a contract transfer carries the tax-law opening date
+    -- across while the account itself is new, and the five-year pension
+    -- eligibility test reads the second one.
+    opened_on TEXT,
+    tax_opened_on TEXT,
+    currency TEXT NOT NULL DEFAULT 'KRW',
+    note TEXT,
+    created_at TEXT NOT NULL,
+    UNIQUE (label, institution)
+);
+
+-- Snapshots, not a ledger. Domestic instrument prices go back 23 sessions and
+-- foreign ones have no history at all, so past portfolio value cannot be
+-- reconstructed by any means; a ledger would cost input effort and produce
+-- nothing. See docs/plan/portfolio.md §4.0.
+CREATE TABLE IF NOT EXISTS holding_snapshots (
+    account_id INTEGER NOT NULL,
+    as_of TEXT NOT NULL,
+    source TEXT NOT NULL,
+    dataset TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    name TEXT NOT NULL,
+    quantity REAL,
+    -- What the broker reported as the acquisition amount. Displayed with its
+    -- method unknown; never used to compute a cost basis or a return.
+    book_amount REAL,
+    -- A value the owner stated because nothing can price it (deposits, funds,
+    -- foreign holdings). Never mixed with a market valuation.
+    stated_value REAL,
+    currency TEXT NOT NULL DEFAULT 'KRW',
+    -- NULL means unknown, and unknown is not false. The DC 70% limit is
+    -- reported as undecidable while any holding in that account is NULL,
+    -- because counting unknowns as zero misstates the constraint.
+    is_risky_asset INTEGER,
+    note TEXT,
+    recorded_at TEXT NOT NULL,
+    PRIMARY KEY (account_id, as_of, source, dataset, symbol),
+    FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
+);
+
+-- External money in and out. The four kinds are separate because an ISA
+-- maturity rolled into a pension account does not count against the pension
+-- contribution limit, and merging it with an ordinary deposit would overstate
+-- how much room the limit has left.
+CREATE TABLE IF NOT EXISTS account_cashflows (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id INTEGER NOT NULL,
+    date TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    amount REAL NOT NULL,
+    currency TEXT NOT NULL DEFAULT 'KRW',
+    note TEXT,
+    recorded_at TEXT NOT NULL,
+    FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
+);
+
+-- Daily valuation, kept per grade and per currency rather than as one number.
+-- A single total would silently add a market price, a stale price, a figure
+-- the owner typed, and a blank — and would need an FX conversion across three
+-- different observation dates to do it.
+CREATE TABLE IF NOT EXISTS portfolio_valuation (
+    date TEXT NOT NULL,
+    account_id INTEGER NOT NULL,
+    grade TEXT NOT NULL,
+    currency TEXT NOT NULL,
+    amount REAL NOT NULL,
+    holdings INTEGER NOT NULL,
+    computed_at TEXT NOT NULL,
+    PRIMARY KEY (date, account_id, grade, currency),
+    FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
+);
+
+-- The owner's own weights as a daily series, so that after enough
+-- observations they can be scored against their own distribution rather than
+-- against a borrowed threshold like "over 60% equity is risky".
+CREATE TABLE IF NOT EXISTS portfolio_metrics (
+    date TEXT NOT NULL,
+    metric TEXT NOT NULL,
+    value REAL NOT NULL,
+    basis TEXT,
+    computed_at TEXT NOT NULL,
+    PRIMARY KEY (date, metric)
+);
+
+-- Instrument to exposure tag. Owner-confirmed only: with 23 sessions of price
+-- history, inferring exposure from correlation would be fitting noise.
+CREATE TABLE IF NOT EXISTS instrument_exposure (
+    source TEXT NOT NULL,
+    dataset TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    tag TEXT NOT NULL,
+    weight REAL NOT NULL DEFAULT 1.0,
+    confirmed_on TEXT NOT NULL,
+    note TEXT,
+    PRIMARY KEY (source, dataset, symbol, tag)
+);
+
+CREATE INDEX IF NOT EXISTS idx_holding_account_asof
+    ON holding_snapshots(account_id, as_of DESC);
+CREATE INDEX IF NOT EXISTS idx_cashflow_account_date
+    ON account_cashflows(account_id, date DESC);
 
 CREATE TABLE IF NOT EXISTS backtest_verdicts (
     date TEXT PRIMARY KEY,

@@ -103,7 +103,9 @@ flowchart TD
 
 - `app/normalize.py`: 분포에서의 위치. 관측 창을 계열이 선언하고 호출부가 고르지 않습니다.
 - `app/layers.py`: 카탈로그를 다섯 층으로 다시 자른 근거 카드와 근거 신뢰도.
-- `app/backtest.py`: 655거래일 판정 재생과 오탐·미탐. 평가 쪽 전방 창은 D 이후만 씁니다 — `Ledger` 는 판정 쪽만 막습니다.
+- `app/accounts.py`: 계좌 유형·제도 상수·매수 게이트. `status`가 `proposed`인 값은 `in_force()`가 걸러 어떤 계산에도 못 들어갑니다.
+- `app/portfolio.py`: 보유 스냅샷 읽기와 CLI. 쓰기 경로는 CLI뿐 — 웹에도 에이전트에도 없습니다.
+- `app/backtest.py`: 판정 재생과 오탐·미탐. 평가 쪽 전방 창은 D 이후만 씁니다 — `Ledger` 는 판정 쪽만 막습니다.
 - `app/pit.py`: 과거 시점 재생. `Ledger`가 판정 코드의 읽기를 대신하고, `observed`(관측일)와 `vintage`(수신 시각)를 분리해 두 종류의 누출을 각각 잽니다. 재생할 수 없는 것과 그 이유를 모듈 문서가 명시합니다.
 
 운영 배치와 복구는 [operations.md](operations.md)를 참고하세요.

@@ -20,7 +20,7 @@ from app import (
     analysis, backtest, brief as brief_module, correlation, coverage,
     dashboard, db,
     explain, history_recovery, layers as layers_module, market_metrics, pit,
-    normalize, registry, sentiment,
+    normalize, portfolio, registry, sentiment,
     spillover,
 )
 from app.collectors import indices, indicators, krx, watchlist
@@ -147,6 +147,20 @@ def backtest_page(request: Request, market: str = "korea"):
 @app.get("/api/backtest")
 def api_backtest(market: str = "korea"):
     return backtest.report("us_regime" if market == "us" else "korea_regime")
+
+
+@app.get("/portfolio", response_class=HTMLResponse)
+def portfolio_page(request: Request):
+    """Read-only, like every other screen. Writes go through the CLI.
+
+    There is no POST path here and no agent write tool: the repository is
+    public, and an asset picture that reaches an external model cannot be
+    recalled. See docs/plan/portfolio.md §4.6.
+    """
+    return templates.TemplateResponse(
+        request, "portfolio.html",
+        {"p": portfolio.overview(), "active": "portfolio"},
+    )
 
 
 @app.get("/api/replay/readiness")

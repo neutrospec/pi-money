@@ -290,7 +290,7 @@ class InstantMigrationTests(unittest.TestCase):
             }
         self.assertIn("session_date", quote_columns)
         self.assertIn("date_kind", catalog_columns)
-        self.assertEqual(db.get_meta("schema_version"), "9")
+        self.assertEqual(db.get_meta("schema_version"), str(db.SCHEMA_VERSION))
 
     def test_index_quote_keeps_a_known_session_when_a_refresh_omits_it(self):
         db.init_db()

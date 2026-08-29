@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% block title %}자산{% endblock %}
+{% block content %}
+  <div class="pagehead">
+    <h1>💼 자산</h1>
+    <div class="sub">계좌별 보유와 제도 제약 · {{ p.as_of }} (KST)</div>
+  </div>
+
+  {% if p.empty %}
+  <div class="card">
+    <div class="card-title">아직 등록된 계좌가 없습니다</div>
+    <div style="font-size:13px;color:#c9d1d9;line-height:1.8;">
+      <p>계좌와 보유 종목은 <b>CLI로만</b> 입력합니다. 웹에는 쓰기 경로가 없고
+         에이전트에도 쓰기 도구가 없습니다 — 이 저장소는 public이고, 자산 구성이
+         한 번 외부로 나가면 회수할 수 없기 때문입니다.
+         <b>계좌번호는 아예 저장하지 않습니다.</b></p>
+      <div class="scroll"><table>
+        <thead><tr><th>할 일</th><th>명령</th></tr></thead>
+        <tbody>
+          <tr><td>계좌 추가</td><td><code>python -m app.portfolio add-account --label "이름" --institution "기관" --type isa</code></td></tr>
+          <tr><td>보유 적재</td><td><code>python -m app.portfolio import --account 1 --as-of 2026-08-30 --file 보유.csv --dry-run</code></td></tr>
+          <tr><td>입출금</td><td><code>python -m app.portfolio flow --account 1 --date 2026-08-30 --kind deposit --amount 1000000</code></td></tr>
+          <tr><td>노출 태그</td><td><code>python -m app.portfolio tag --source krx --dataset etf_bydd_trd --symbol 069500 --tag kr_equity</code></td></tr>
+        </tbody>
+      </table></div>
+      <p style="margin-top:12px;">CSV 열: <code>source,dataset,symbol,name,quantity,book_amount,stated_value,currency,is_risky_asset,note</code>.
+         <code>is_risky_asset</code>을 비워두면 <b>미상</b>으로 남고, 그건 안전으로 세지 않습니다.</p>
+    </div>
+  </div>
+  {% else %}
+
+  {% for a in p.accounts %}
+  <div class="card">
+    <div class="card-title">{{ a.label }}
+      <span style="color:#8b949e;font-weight:400;font-size:12px;">{{ a.institution }} · {{ a.type_label }}</span>
+      {% if a.as_of %}<span style="color:#6e7681;font-weight:400;font-size:12px;">기준 {{ a.as_of }}{% if a.stale_days and a.stale_days > 7 %} · {{ a.stale_days }}일 경과{% endif %}</span>{% endif %}
+    </div>
+
+    {% if not a.as_of %}
+    <div style="font-size:13px;color:#8b949e;">보유 스냅샷이 없습니다. <code>import</code>로 적재하세요.</div>
+    {% else %}
+
+    <div class="scroll"><table>
+      <thead><tr><th>등급</th><th>통화</th><th>금액</th><th>건수</th></tr></thead>
+      <tbody>
+      {% for b in a.valuation.buckets %}
+      <tr>
+        <td>{{ p.grade_labels[b.grade] }}</td>
+        <td>{{ b.currency }}</td>
+        <td class="num">{% if b.grade == 'unpriced' %}<span style="color:#8b949e;">—</span>{% else %}{{ '{:,.0f}'.format(b.amount) }}{% endif %}</td>
+        <td class="num">{{ b.holdings }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+    <div style="font-size:11px;color:#6e7681;margin-top:6px;">{{ a.valuation.note }}</div>
+
+    {% if a.risky.applicable %}
+    <div style="margin-top:12px;padding:8px 12px;border-left:2px solid {% if a.risky.decidable %}#6e7681{% else %}#d29922{% endif %};">
+      <div style="font-size:13px;font-weight:600;">위험자산 비중</div>
+      {% if a.risky.decidable %}
+      <div style="font-size:14px;">현재 {{ a.risky.share_pct }}% / 한도 {{ a.risky.limit_pct }}%</div>
+      {% else %}
+      <div style="font-size:14px;color:#d29922;">{{ a.risky.reason }} · 한도 {{ a.risky.limit_pct }}%</div>
+      {% endif %}
+      <div style="font-size:11px;color:#8b949e;margin-top:4px;">{{ a.risky.limit_note }}</div>
+    </div>
+    {% endif %}
+
+    {% if a.conflicts %}
+    <div style="margin-top:12px;">
+      {% for c in a.conflicts %}
+      <div style="font-size:12px;color:#d29922;">· {{ c.name }} — {{ c.detail }}</div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    <details class="learn"><summary>보유 {{ a.holdings | length }}건</summary>
+      <div class="scroll"><table>
+        <thead><tr><th>종목</th><th>수량</th><th>평가</th><th>등급</th><th>위험자산</th></tr></thead>
+        <tbody>
+        {% for h in a.holdings %}
+        <tr>
+          <td>{{ h.name }}<span style="color:#6e7681;font-size:11px;"> {{ h.symbol }}</span></td>
+          <td class="num">{{ h.quantity if h.quantity is not none else '—' }}</td>
+          <td class="num">{% if h.amount is none %}<span style="color:#8b949e;">평가 불가</span>{% else %}{{ '{:,.0f}'.format(h.amount) }} {{ h.currency }}{% endif %}</td>
+          <td>{{ p.grade_labels[h.grade] }}{% if h.price_date %} <span style="color:#6e7681;font-size:11px;">{{ h.price_date }}</span>{% endif %}</td>
+          <td>{% if h.is_risky_asset is none %}<span style="color:#d29922;">미상</span>{% elif h.is_risky_asset %}위험{% else %}안전{% endif %}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table></div>
+    </details>
+    {% endif %}
+
+    {% if a.policy %}
+    <details class="learn"><summary>제도</summary>
+      {% for item in a.policy %}
+      <p>
+        <b>{{ item.key }}</b>
+        {% if item.status == 'in_force' %}
+          — {{ '{:,}'.format(item.value) }}{{ item.unit }}
+          <span style="color:#6e7681;font-size:11px;">({{ item.scope }} 기준, {{ item.effective_from }}~)</span>
+        {% else %}
+          — <span style="color:#8b949e;">{{ '{:,}'.format(item.value) }}{{ item.unit }}</span>
+          <span style="background:#30363d;color:#8b949e;font-size:10px;padding:1px 5px;border-radius:3px;">정부안, 미시행</span>
+        {% endif %}
+        <br><span style="color:#8b949e;font-size:12px;">{{ item.note }}</span>
+      </p>
+      {% endfor %}
+    </details>
+    {% endif %}
+  </div>
+  {% endfor %}
+  {% endif %}
+
+  <div class="card" style="border-left:3px solid #6e7681;">
+    <div style="font-size:12px;color:#8b949e;line-height:1.8;">{{ p.warning }}</div>
+  </div>
+{% endblock %}

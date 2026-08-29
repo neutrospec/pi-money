@@ -130,7 +130,7 @@ class DatabaseTests(TemporaryDatabaseTest):
         self.assertEqual("{}", row["source_options_json"])
         self.assertEqual(5, row["max_age_days"])
         self.assertEqual('{"item_code2":"2"}', selected["source_options_json"])
-        self.assertEqual("9", db.get_meta("schema_version"))
+        self.assertEqual(str(db.SCHEMA_VERSION), db.get_meta("schema_version"))
 
     def test_replace_index_refuses_empty_input(self):
         db.init_db()

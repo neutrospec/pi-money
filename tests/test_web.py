@@ -18,7 +18,8 @@ from app import db
 
 
 PAGES = (
-    "/", "/brief", "/layers", "/backtest", "/rates", "/charts", "/stocks",
+    "/", "/brief", "/layers", "/backtest", "/portfolio", "/rates", "/charts",
+    "/stocks",
     "/indices", "/markets", "/analysis", "/correlation", "/spillover", "/data",
     "/manage", "/calendar", "/learn",
 )
