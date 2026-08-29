@@ -387,6 +387,51 @@ class WriteGateTests(TemporaryDatabaseTest):
                                  portfolio.holdings(account, today=date(2026, 8, 30))])
 
 
+class EditTests(TemporaryDatabaseTest):
+    """The type is not cosmetic — it sets the gates and the limits."""
+
+    def test_a_wrong_account_type_can_be_corrected(self):
+        # The first web form let the type select default silently to the first
+        # option, so a pension account could be recorded as a general one and
+        # nothing but hand-editing SQLite could fix it.
+        account = portfolio.add_account("연금", "테스트 증권", "general")
+        portfolio.update_account(account, account_type="pension_savings")
+        stored = portfolio.account_list()[0]
+        self.assertEqual("pension_savings", stored["account_type"])
+        self.assertIn("개별주식", stored["gates"])
+
+    def test_only_the_named_fields_change(self):
+        account = portfolio.add_account("원래", "테스트 증권", "isa",
+                                        opened_on="2021-01-04")
+        portfolio.update_account(account, label="새 이름")
+        stored = portfolio.account_list()[0]
+        self.assertEqual(("새 이름", "isa", "2021-01-04"),
+                         (stored["label"], stored["account_type"],
+                          stored["opened_on"]))
+
+    def test_an_unknown_type_is_refused_rather_than_stored(self):
+        account = portfolio.add_account("테스트", "테스트 증권", "isa")
+        with self.assertRaises(ValueError):
+            portfolio.update_account(account, account_type="crypto_casino")
+        self.assertEqual("isa", portfolio.account_list()[0]["account_type"])
+
+    def test_an_empty_change_set_is_refused(self):
+        account = portfolio.add_account("테스트", "테스트 증권", "isa")
+        with self.assertRaises(ValueError):
+            portfolio.update_account(account)
+
+    def test_an_unknown_account_is_refused(self):
+        with self.assertRaises(ValueError):
+            portfolio.update_account(9999, label="유령")
+
+    def test_holdings_survive_a_type_correction(self):
+        account = portfolio.add_account("테스트", "테스트 증권", "general")
+        portfolio.import_rows(account, "2026-08-30",
+                              "source,dataset,symbol,name,stated_value\n,,A,합성,1000")
+        portfolio.update_account(account, account_type="retirement_dc")
+        self.assertEqual(1, len(portfolio.holdings(account, today=date(2026, 8, 30))))
+
+
 class WriteSurfaceTests(TemporaryDatabaseTest):
     """The repository is public and an asset picture cannot be recalled."""
 

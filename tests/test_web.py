@@ -37,6 +37,8 @@ UI_EXEMPT = {
                      "endpoint exists because agents read the verification too",
     "/api/portfolio/account": "write endpoint, called by the form JS on "
                               "/portfolio and gated to local requests",
+    "/api/portfolio/account/update": "write endpoint, called by the form JS "
+                                     "on /portfolio and gated to local requests",
     "/api/portfolio/holdings": "write endpoint, called by the form JS on "
                                "/portfolio and gated to local requests",
     "/api/portfolio/flow": "write endpoint, called by the form JS on "
@@ -138,9 +140,28 @@ class FormStyleTests(unittest.TestCase):
                 f"<{element}> is rendered but the stylesheet never styles it",
             )
 
-    def test_a_form_disclosure_does_not_reuse_the_footnote_class(self):
-        # details.learn styles its summary as an 18x18 circle. A form section
-        # inside one squeezes its heading to one character per line.
+    def test_the_footnote_disclosure_only_ever_holds_its_glyph(self):
+        # details.learn styles its summary as an 18x18 circle holding a single
+        # "?". Anything else — a form heading, a sentence, a count — stacks one
+        # character per line. That shipped twice: on the account card ("보유
+        # 2건") and on the layer cards ("아직 투표하지 못한 근거 N개"), and a
+        # 200-plus-no-stray-tags check saw nothing wrong with either.
+        import re
+
+        for path in Path("app/templates").glob("*.html"):
+            body = path.read_text(encoding="utf-8")
+            for chunk in body.split('<details class="learn"')[1:]:
+                found = re.search(r"<summary>(.*?)</summary>", chunk, re.S)
+                if not found:
+                    continue
+                self.assertEqual(
+                    "?", found.group(1).strip(),
+                    f"{path.name}: details.learn summary must be the glyph; "
+                    f"use details.more for a sentence or details.form for a "
+                    f"form section",
+                )
+
+    def test_a_form_control_never_sits_in_a_footnote_disclosure(self):
         for path in Path("app/templates").glob("*.html"):
             body = path.read_text(encoding="utf-8")
             for chunk in body.split('<details class="learn"')[1:]:
@@ -151,6 +172,20 @@ class FormStyleTests(unittest.TestCase):
                         f"{path.name}: form control inside details.learn — "
                         f"use details.form, whose summary is full width",
                     )
+
+    def test_every_disclosure_class_the_templates_use_is_styled(self):
+        # A class nobody styled renders as the browser default, which is a
+        # bare triangle with no spacing — legible but wrong, and invisible to
+        # a status-code check.
+        import re
+
+        styles = Path("app/templates/base.html").read_text(encoding="utf-8")
+        used = set()
+        for path in Path("app/templates").glob("*.html"):
+            used.update(re.findall(r'<details class="([a-z-]+)"',
+                                   path.read_text(encoding="utf-8")))
+        for name in sorted(used):
+            self.assertIn(f"details.{name}", styles, name)
 
     def test_a_field_label_is_a_block_not_inline_text(self):
         # "이름예: 연금저축(주력)" was the symptom: label text and its input

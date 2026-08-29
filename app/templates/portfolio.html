@@ -31,7 +31,7 @@
     {% else %}
 
     <div class="scroll"><table>
-      <thead><tr><th>등급</th><th>통화</th><th>금액</th><th>건수</th></tr></thead>
+      <thead><tr><th>등급</th><th>통화</th><th class="num">금액</th><th class="num">건수</th></tr></thead>
       <tbody>
       {% for b in a.valuation.buckets %}
       <tr>
@@ -65,9 +65,9 @@
     </div>
     {% endif %}
 
-    <details class="learn"><summary>보유 {{ a.holdings | length }}건</summary>
+    <details class="more"><summary>보유 {{ a.holdings | length }}건</summary>
       <div class="scroll"><table>
-        <thead><tr><th>종목</th><th>수량</th><th>평가</th><th>등급</th><th>위험자산</th></tr></thead>
+        <thead><tr><th>종목</th><th class="num">수량</th><th class="num">평가</th><th>등급</th><th>위험자산</th></tr></thead>
         <tbody>
         {% for h in a.holdings %}
         <tr>
@@ -84,7 +84,7 @@
     {% endif %}
 
     {% if a.policy %}
-    <details class="learn"><summary>제도</summary>
+    <details class="more"><summary>제도</summary>
       {% for item in a.policy %}
       <p>
         <b>{{ item.key }}</b>
@@ -119,8 +119,10 @@
             <input id="acInst" placeholder="OO증권"></label>
           <label class="field"><span>유형</span>
             <select id="acType">
+              <option value="" selected>선택하세요</option>
               {% for key, name in types.items() %}<option value="{{ key }}">{{ name }}</option>{% endfor %}
-            </select></label>
+            </select>
+            <span class="hint">유형에 따라 매수 가능 상품과 납입 한도가 다릅니다</span></label>
           <label class="field"><span>통화</span>
             <input id="acCur" value="KRW"></label>
           <label class="field"><span>개설일</span>
@@ -132,6 +134,36 @@
         </div>
         <div class="actions"><button class="primary" onclick="addAccount()">계좌 추가</button></div>
         <div class="note">계좌번호 입력란이 없는 것은 실수가 아니라 설계입니다 — 저장하지 않습니다.</div>
+      </div>
+    </details>
+
+    <details class="form">
+      <summary>계좌 수정</summary>
+      <div class="form-body">
+        {% if p.empty %}
+        <div class="note warn">계좌를 먼저 추가하세요.</div>
+        {% else %}
+        <div class="fields">
+          <label class="field"><span>계좌</span>
+            <select id="edAccount" onchange="fillEdit()">
+              {% for a in p.accounts %}<option value="{{ a.id }}"
+                data-label="{{ a.label }}" data-inst="{{ a.institution }}"
+                data-type="{{ a.account_type }}" data-cur="{{ a.currency }}"
+                >{{ a.label }} ({{ a.type_label }})</option>{% endfor %}
+            </select></label>
+          <label class="field"><span>이름</span><input id="edLabel"></label>
+          <label class="field"><span>기관</span><input id="edInst"></label>
+          <label class="field"><span>유형</span>
+            <select id="edType">
+              {% for key, name in types.items() %}<option value="{{ key }}">{{ name }}</option>{% endfor %}
+            </select></label>
+        </div>
+        <div class="actions"><button class="primary" onclick="editAccount()">수정</button></div>
+        <div class="note">
+          유형은 표시용이 아닙니다 — 그 계좌가 담을 수 있는 상품과 납입 한도를 정합니다.
+          잘못 저장됐다면 여기서 고치세요.
+        </div>
+        {% endif %}
       </div>
     </details>
 
@@ -244,6 +276,7 @@
   function val(id) { const el = document.getElementById(id); return el ? el.value.trim() : ''; }
   async function addAccount() {
     if (!val('acLabel') || !val('acInst')) { say('이름과 기관은 필요합니다.', true); return; }
+    if (!val('acType')) { say('계좌 유형을 선택하세요 — 유형이 매수 가능 상품과 한도를 정합니다.', true); return; }
     const d = await send('/api/portfolio/account', {
       label: val('acLabel'), institution: val('acInst'),
       account_type: val('acType'), opened_on: val('acOpened'),
@@ -251,6 +284,21 @@
     });
     if (d) { say('계좌 ' + d.id + ' 추가됨'); setTimeout(() => location.reload(), 700); }
   }
+  function fillEdit() {
+    const opt = document.getElementById('edAccount').selectedOptions[0];
+    if (!opt) return;
+    document.getElementById('edLabel').value = opt.dataset.label;
+    document.getElementById('edInst').value = opt.dataset.inst;
+    document.getElementById('edType').value = opt.dataset.type;
+  }
+  async function editAccount() {
+    const d = await send('/api/portfolio/account/update', {
+      id: val('edAccount'), label: val('edLabel'),
+      institution: val('edInst'), account_type: val('edType'),
+    });
+    if (d) { say('수정됨: ' + d.changed.join(', ')); setTimeout(() => location.reload(), 700); }
+  }
+  document.addEventListener('DOMContentLoaded', fillEdit);
   async function importHoldings(preview) {
     const d = await send('/api/portfolio/holdings', {
       account_id: val('hAccount'), as_of: val('hAsOf'),

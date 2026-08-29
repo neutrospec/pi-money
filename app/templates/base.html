@@ -94,6 +94,20 @@
   .note { font-size:11px; color:#6e7681; line-height:1.6; margin-top:10px; }
   .note.warn { color:#d29922; }
 
+  /* A disclosure whose summary is a sentence, not a glyph. details.learn's
+     summary is an 18px circle holding a single "?", so putting words in one
+     stacks them a character per line — which is exactly what shipped on the
+     account card and the layer cards. This is the variant for text. */
+  details.more { margin-top:10px; border-top:1px solid #21262d; padding-top:8px; }
+  details.more > summary {
+    cursor:pointer; color:#8b949e; font-size:12px; list-style:none;
+    display:inline-flex; align-items:center; gap:6px;
+  }
+  details.more > summary::-webkit-details-marker { display:none; }
+  details.more > summary::before { content:"▸"; font-size:10px; color:#6e7681; }
+  details.more[open] > summary::before { content:"▾"; color:#58a6ff; }
+  details.more > summary:hover { color:#e6edf3; }
+
   /* Progressive disclosure: the tile is complete without opening this, and
      opening it never moves the reader to another page. */
   details.learn { margin-top:8px; border-top:1px solid #21262d; padding-top:6px; }

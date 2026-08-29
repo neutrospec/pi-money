@@ -274,6 +274,37 @@ def add_account(label: str, institution: str, account_type: str, *,
         return cursor.lastrowid
 
 
+def update_account(account_id: int, **changes) -> dict:
+    """Correct an account's details. Everything except its identity as a row.
+
+    Needed because the type is not cosmetic: it decides which instruments the
+    account may hold and which contribution limits apply. The first version of
+    the web form let the type select default silently to the first option, so
+    a pension account could be recorded as a general one — and without this,
+    the only fix was editing SQLite by hand.
+    """
+    fields = ("label", "institution", "account_type", "opened_on",
+              "tax_opened_on", "currency", "note")
+    updates = {key: value for key, value in changes.items()
+               if key in fields and value not in (None, "")}
+    if not updates:
+        raise ValueError("바꿀 항목이 없습니다")
+    if "account_type" in updates and updates["account_type"] not in accounts.ACCOUNT_TYPES:
+        raise ValueError(
+            f"알 수 없는 계좌 유형: {updates['account_type']} "
+            f"(가능: {', '.join(accounts.ACCOUNT_TYPES)})"
+        )
+    assignments = ", ".join(f"{key}=:{key}" for key in updates)
+    with db.get_conn() as conn:
+        cursor = conn.execute(
+            f"UPDATE accounts SET {assignments} WHERE id=:id",
+            {**updates, "id": account_id},
+        )
+        if not cursor.rowcount:
+            raise ValueError(f"계좌 {account_id}를 찾을 수 없습니다")
+    return {"id": account_id, "changed": sorted(updates)}
+
+
 def _parse_rows(text: str) -> list[dict]:
     """CSV text to normalised dicts. One parser for the CLI and the browser.
 
@@ -448,6 +479,16 @@ def main() -> None:
     tag.add_argument("--weight", type=float, default=1.0)
     tag.add_argument("--note")
 
+    edit = sub.add_parser("edit-account", help="계좌 정보 수정 (유형 오입력 정정 등)")
+    edit.add_argument("--account", type=int, required=True)
+    edit.add_argument("--label")
+    edit.add_argument("--institution")
+    edit.add_argument("--type", choices=sorted(accounts.ACCOUNT_TYPES))
+    edit.add_argument("--opened-on")
+    edit.add_argument("--tax-opened-on")
+    edit.add_argument("--currency")
+    edit.add_argument("--note")
+
     sub.add_parser("list", help="계좌 목록")
 
     args = parser.parse_args()
@@ -479,6 +520,13 @@ def main() -> None:
         tag_instrument(args.source, args.dataset, args.symbol, args.tag,
                        weight=args.weight, note=args.note)
         print(f"태그: {args.symbol} → {accounts.EXPOSURE_TAGS[args.tag]}")
+    elif args.command == "edit-account":
+        result = update_account(
+            args.account, label=args.label, institution=args.institution,
+            account_type=args.type, opened_on=args.opened_on,
+            tax_opened_on=args.tax_opened_on, currency=args.currency,
+            note=args.note)
+        print(f"계좌 {result['id']} 수정: {', '.join(result['changed'])}")
     elif args.command == "list":
         found = account_list()
         if not found:

@@ -85,7 +85,7 @@
     {% endif %}
 
     {% if l.pending %}
-    <details class="learn"><summary>아직 투표하지 못한 근거 {{ l.pending | length }}개</summary>
+    <details class="more"><summary>아직 투표하지 못한 근거 {{ l.pending | length }}개</summary>
       {% for p in l.pending %}<p><b>{{ p.label }}</b> — {{ p.reason }}</p>{% endfor %}
     </details>
     {% endif %}

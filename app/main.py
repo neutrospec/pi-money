@@ -192,6 +192,23 @@ def api_add_account(body: dict = Body(...)):
     return {"id": new_id, "label": body["label"]}
 
 
+@app.post("/api/portfolio/account/update",
+          dependencies=[Depends(webwrite.require_local_write)])
+def api_update_account(body: dict = Body(...)):
+    """Correct an account. The type is not cosmetic — it sets gates and limits."""
+    try:
+        return portfolio.update_account(
+            int(body["id"]),
+            **{key: body.get(key) for key in
+               ("label", "institution", "account_type", "opened_on",
+                "tax_opened_on", "currency", "note")},
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=400, detail=f"빠진 항목: {exc}") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.post("/api/portfolio/holdings", dependencies=[Depends(webwrite.require_local_write)])
 def api_import_holdings(body: dict = Body(...)):
     """Replace one account's snapshot for one date, from pasted CSV.
