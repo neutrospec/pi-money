@@ -1302,12 +1302,56 @@ def get_market_daily(
     return result
 
 
-def get_latest_market_daily(source: str, dataset: str) -> dict:
-    """Return every normalized row for one dataset's latest cached day."""
+def get_indicator_vintage_points(
+    indicator: str, *, as_of: str, end: str | None = None
+) -> list[dict]:
+    """What this series looked like to us at ``as_of``, from the vintage ledger.
+
+    ``as_of`` is an instant, not a date. A same-day re-collection changes the
+    value without changing the observation date — gold's 2026-08-28 close was
+    4639.60 at 06:46Z and 4505.70 at 20:49Z — so a date-granular cut would pick
+    one of them without saying which.
+
+    Only observations the ledger actually witnessed are returned. The ledger
+    began recording on 2026-08-23, so an earlier ``as_of`` yields little or
+    nothing; that emptiness is the honest answer, not a reason to fall back to
+    today's values.
+    """
+    query = """
+        SELECT v.date, v.value, v.retrieved_at
+        FROM indicator_vintages v
+        WHERE v.indicator = ? AND v.retrieved_at <= ?
+          AND v.retrieved_at = (
+              SELECT MAX(w.retrieved_at) FROM indicator_vintages w
+              WHERE w.indicator = v.indicator AND w.date = v.date
+                AND w.retrieved_at <= ?
+          )
+    """
+    params: list = [indicator, as_of, as_of]
+    if end:
+        query += " AND v.date <= ?"
+        params.append(end)
+    query += " ORDER BY v.date"
+    with get_conn() as conn:
+        rows = conn.execute(query, params).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_latest_market_daily(
+    source: str, dataset: str, *, day: str | None = None
+) -> dict:
+    """Every normalized row for one dataset's latest cached day.
+
+    ``day`` caps the search: the newest stored session on or before it. Without
+    the cap this function always answers "today", which is wrong for any caller
+    replaying a past date — and one such caller existed silently, so a brief
+    reconstructed for last week reported this week's market breadth.
+    """
     with get_conn() as conn:
         row = conn.execute(
-            "SELECT MAX(date) AS date FROM market_daily WHERE source=? AND dataset=?",
-            (source, dataset),
+            "SELECT MAX(date) AS date FROM market_daily "
+            "WHERE source=? AND dataset=?" + (" AND date<=?" if day else ""),
+            (source, dataset, day) if day else (source, dataset),
         ).fetchone()
         latest = row["date"] if row else None
         if not latest:

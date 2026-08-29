@@ -30,20 +30,38 @@ MOVER_LIMIT = 8
 MOVER_THRESHOLD = 8.0
 
 
-def _korea_regime() -> dict:
+# The reads below take an optional ledger so a past date can be replayed
+# through the same verdict code. None means live; no existing call site
+# changes. See app/pit.py for what a replay can and cannot reconstruct.
+def _korea_regime(ledger=None) -> dict:
+    if ledger is None:
+        return analysis.korea_regime(
+            db.get_indicator_points("kr_vkospi"),
+            market_metrics.aligned_spread_series("kr_corp_bond_3y", "kr_treasury_3y"),
+            market_metrics.aligned_spread_series("kr_cp_91d", "kr_cd_91d"),
+            db.get_index_points("^KS11"),
+        )
     return analysis.korea_regime(
-        db.get_indicator_points("kr_vkospi"),
-        market_metrics.aligned_spread_series("kr_corp_bond_3y", "kr_treasury_3y"),
-        market_metrics.aligned_spread_series("kr_cp_91d", "kr_cd_91d"),
-        db.get_index_points("^KS11"),
+        ledger.indicator("kr_vkospi"),
+        ledger.spread("kr_corp_bond_3y", "kr_treasury_3y"),
+        ledger.spread("kr_cp_91d", "kr_cd_91d"),
+        ledger.index("^KS11"),
+        today=ledger.today(),
     )
 
 
-def _us_regime() -> dict:
+def _us_regime(ledger=None) -> dict:
+    if ledger is None:
+        return analysis.market_regime(
+            db.get_indicator_points("us_vix"),
+            db.get_indicator_points("us_ig_spread"),
+            db.get_index_points("^GSPC"),
+        )
     return analysis.market_regime(
-        db.get_indicator_points("us_vix"),
-        db.get_indicator_points("us_ig_spread"),
-        db.get_index_points("^GSPC"),
+        ledger.indicator("us_vix"),
+        ledger.indicator("us_ig_spread"),
+        ledger.index("^GSPC"),
+        today=ledger.today(),
     )
 
 

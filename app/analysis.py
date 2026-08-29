@@ -16,14 +16,23 @@ from app.collectors import indicators
 from app.timeutil import kst_today
 
 
-def _latest_if_recent(points: list[dict] | None, max_age_days: int) -> dict | None:
+def _latest_if_recent(
+    points: list[dict] | None, max_age_days: int, today=None
+) -> dict | None:
+    """The latest observation, unless it is older than the allowance.
+
+    ``today`` exists so a replay can freeze the clock. A freshness gate that
+    reads the real wall clock would call every past reading stale and quietly
+    empty the verdict it was asked to reproduce.
+    """
     if not points:
         return None
     from datetime import date
 
     point = points[-1]
     try:
-        if (kst_today() - date.fromisoformat(point["date"])).days > max_age_days:
+        now = today or kst_today()
+        if (now - date.fromisoformat(point["date"])).days > max_age_days:
             return None
     except (KeyError, TypeError, ValueError):
         return None
@@ -383,6 +392,7 @@ def market_regime(
     vix: list[dict] | None,
     spread: list[dict] | None,
     sp500: list[dict] | None,
+    today=None,
 ) -> dict:
     """Classify market regime using VIX, credit spread, and equity trend.
 
@@ -393,7 +403,7 @@ def market_regime(
     reasons = []
 
     # VIX: <18 risk-on, >25 risk-off
-    vix_point = _latest_if_recent(vix, 7)
+    vix_point = _latest_if_recent(vix, 7, today)
     if vix_point:
         v = vix_point["value"]
         if v < 18:
@@ -404,7 +414,7 @@ def market_regime(
             scores.append(0); reasons.append(f"VIX 중립 ({v})")
 
     # credit spread (IG): <1% risk-on, >1.5% risk-off
-    spread_point = _latest_if_recent(spread, 7)
+    spread_point = _latest_if_recent(spread, 7, today)
     if spread_point:
         s = spread_point["value"]
         if s < 1.0:
@@ -415,7 +425,7 @@ def market_regime(
             scores.append(0); reasons.append(f"스프레드 중립 ({s})")
 
     # S&P 500 vs 200-day MA
-    sp_point = _latest_if_recent(sp500, 7)
+    sp_point = _latest_if_recent(sp500, 7, today)
     if sp_point and sp500 and len(sp500) >= 200:
         ma200 = np.mean([p["value"] for p in sp500[-200:]])
         current = sp500[-1]["value"]
@@ -505,6 +515,7 @@ def _percentile_component(
     label: str,
     series: list[dict] | None,
     *,
+    today=None,
     invert: bool,
     unit: str,
     note: str,
@@ -526,7 +537,7 @@ def _percentile_component(
             "reason": f"{note} 이력이 {minimum}거래일 이상 쌓이면 활성화됩니다 "
                       f"(현재 {len(series or [])})",
         }
-    point = _latest_if_recent(series, KR_MAX_AGE_DAYS)
+    point = _latest_if_recent(series, KR_MAX_AGE_DAYS, today)
     if point is None:
         return {
             "key": key, "label": label, "score": None,
@@ -556,7 +567,7 @@ def _cut(percentile: float) -> int:
     return 0
 
 
-def _kospi_trend(kospi: list[dict] | None) -> dict:
+def _kospi_trend(kospi: list[dict] | None, today=None) -> dict:
     minimum = KR_MIN_HISTORY["trend"]
     if not kospi or len(kospi) < minimum:
         return {
@@ -564,7 +575,7 @@ def _kospi_trend(kospi: list[dict] | None) -> dict:
             "reason": f"코스피 이력이 {minimum}거래일 이상 쌓이면 활성화됩니다 "
                       f"(현재 {len(kospi or [])})",
         }
-    point = _latest_if_recent(kospi, KR_MAX_AGE_DAYS)
+    point = _latest_if_recent(kospi, KR_MAX_AGE_DAYS, today)
     if point is None:
         return {
             "key": "trend", "label": "주가 추세", "score": None,
@@ -583,7 +594,7 @@ def _kospi_trend(kospi: list[dict] | None) -> dict:
     }
 
 
-def _kospi_drawdown(kospi: list[dict] | None) -> dict:
+def _kospi_drawdown(kospi: list[dict] | None, today=None) -> dict:
     """Score the distance below the 52-week high against 20 years of the same.
 
     The window here is the full history, not the trailing 250 sessions the
@@ -598,7 +609,7 @@ def _kospi_drawdown(kospi: list[dict] | None) -> dict:
             "reason": f"코스피 이력이 {minimum}거래일 이상 쌓이면 활성화됩니다 "
                       f"(현재 {len(kospi or [])})",
         }
-    point = _latest_if_recent(kospi, KR_MAX_AGE_DAYS)
+    point = _latest_if_recent(kospi, KR_MAX_AGE_DAYS, today)
     if point is None:
         return {
             "key": "drawdown", "label": "고점 대비 낙폭", "score": None,
@@ -629,6 +640,7 @@ def korea_regime(
     credit_spread: list[dict] | None,
     funding_spread: list[dict] | None,
     kospi: list[dict] | None,
+    today=None,
 ) -> dict:
     """Classify Korean conditions from Korean inputs, by percentile.
 
@@ -641,18 +653,18 @@ def korea_regime(
     components = [
         _percentile_component(
             "volatility", "변동성", vkospi, invert=True, unit="",
-            note="VKOSPI", window=normalize.window_for("kr_vkospi"),
+            note="VKOSPI", window=normalize.window_for("kr_vkospi"), today=today,
         ),
         _percentile_component(
             "credit", "회사채 신용", credit_spread, invert=True, unit="%p",
-            note="회사채 AA- 3년 − 국고채 3년 스프레드",
+            note="회사채 AA- 3년 − 국고채 3년 스프레드", today=today,
         ),
         _percentile_component(
             "funding", "단기 자금시장", funding_spread, invert=True, unit="%p",
-            note="CP 91일 − CD 91일 스프레드",
+            note="CP 91일 − CD 91일 스프레드", today=today,
         ),
-        _kospi_trend(kospi),
-        _kospi_drawdown(kospi),
+        _kospi_trend(kospi, today),
+        _kospi_drawdown(kospi, today),
     ]
     active = [item for item in components if item.get("score") is not None]
     pending = [

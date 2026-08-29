@@ -257,8 +257,8 @@ def _concentration(rows: list[dict], field: str) -> float | None:
     return round(sum(values[:10]) / total * 100, 2) if total else None
 
 
-def _breadth_market(dataset: str, label: str) -> dict:
-    latest = db.get_latest_market_daily("krx", dataset)
+def _breadth_market(dataset: str, label: str, *, day: str | None = None) -> dict:
+    latest = db.get_latest_market_daily("krx", dataset, day=day)
     rows = latest["rows"]
     if not rows:
         return {
@@ -325,11 +325,16 @@ def _breadth_market(dataset: str, label: str) -> dict:
     }
 
 
-def krx_breadth_snapshot() -> dict:
-    """Derive KOSPI/KOSDAQ breadth from cached official KRX stock tables."""
+def krx_breadth_snapshot(*, day: str | None = None) -> dict:
+    """Derive KOSPI/KOSDAQ breadth from cached official KRX stock tables.
+
+    ``day`` caps the session read. Without it this asked for MAX(date) and a
+    point-in-time replay silently received the newest session's breadth — the
+    verdict for a past Tuesday quoting a Friday nobody had seen yet.
+    """
     markets = [
-        _breadth_market("stk_bydd_trd", "KOSPI"),
-        _breadth_market("ksq_bydd_trd", "KOSDAQ"),
+        _breadth_market("stk_bydd_trd", "KOSPI", day=day),
+        _breadth_market("ksq_bydd_trd", "KOSDAQ", day=day),
     ]
     dates = [market["as_of"] for market in markets if market["as_of"]]
     return {
