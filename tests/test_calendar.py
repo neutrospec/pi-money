@@ -1027,6 +1027,130 @@ class HistoricalRecoveryTests(TemporaryDatabaseTest):
         )
         self.assertEqual("verified_empty", row["status"])
 
+    def test_recovered_krx_day_stores_the_series_the_table_implies(self):
+        """A stored table without its derived series is not a recovered day.
+
+        Only first-line collection used to derive these, so every day the
+        second-line layer recovered left the ledger calling the day complete
+        while the gauge that needed it stayed empty.
+        """
+        db.init_db()
+        # Depth 1 so the generation is exactly the day under test; this
+        # dataset ships a 250-day backfill window in production.
+        spec = {
+            **next(
+                item for item in krx.DATASETS if item["dataset"] == "drvprod_dd_trd"
+            ),
+            "history_days": 1,
+        }
+        day = "2026-08-17"
+        raw = [{
+            "BAS_DD": "20260817", "IDX_CLSS": "변동성",
+            "IDX_NM": "코스피 200 변동성지수", "CLSPRC_IDX": "56.29",
+        }]
+        with patch("app.history_recovery.indicators.catalog", return_value={}), \
+             patch("app.history_recovery.indices.index_list", return_value=[]), \
+             patch("app.history_recovery.krx.enabled", return_value=True), \
+             patch("app.history_recovery.krx.dataset_specs", return_value=[spec]), \
+             patch("app.history_recovery.krx.catchup_dates", return_value=[day]), \
+             patch("app.history_recovery.krx.fetch_dataset", return_value=raw), \
+             patch.object(history_recovery, "INDICATOR_CALL_BUDGET", 0), \
+             patch.object(history_recovery, "INDEX_CALL_BUDGET", 0), \
+             patch.object(history_recovery, "KRX_CALL_BUDGET", 1):
+            history_recovery.run()
+
+        self.assertEqual(
+            [{"date": day, "value": 56.29}], db.get_indicator_points("kr_vkospi")
+        )
+
+    def test_audit_rebuilds_a_missing_aggregate_from_rows_already_held(self):
+        """The repair needs no provider: market_daily keeps the raw payload."""
+        db.init_db()
+        spec = next(
+            item for item in krx.DATASETS if item["dataset"] == "drvprod_dd_trd"
+        )
+        day = "2026-08-17"
+        db.save_market_batch("krx", "drvprod_dd_trd", day, krx.normalize_rows(
+            spec,
+            [{
+                "BAS_DD": "20260817", "IDX_CLSS": "변동성",
+                "IDX_NM": "코스피 200 변동성지수", "CLSPRC_IDX": "83.43",
+            }],
+            day,
+        ))
+        self.assertEqual([], db.get_indicator_points("kr_vkospi"))
+
+        with patch("app.history_recovery.krx.dataset_specs", return_value=[spec]), \
+             patch("app.history_recovery.krx.fetch_dataset") as fetch:
+            repaired = history_recovery.rebuild_krx_aggregates()
+
+        fetch.assert_not_called()
+        self.assertEqual({"drvprod_dd_trd": 1}, repaired)
+        self.assertEqual(
+            [{"date": day, "value": 83.43}], db.get_indicator_points("kr_vkospi")
+        )
+
+    def test_deeper_history_extends_backwards_only_and_is_idempotent(self):
+        """Raising a dataset's depth must not let the queue grow forward.
+
+        The generation is anchored at its own newest day. Anchoring on today
+        instead would add a session every day and never settle.
+        """
+        db.init_db()
+        base = dict(
+            next(item for item in krx.DATASETS if item["dataset"] == "stk_bydd_trd")
+        )
+        days = ["2026-08-17", "2026-08-18", "2026-08-19"]
+        scopes = lambda: {  # noqa: E731
+            row["scope"] for row in db.list_recovery_targets(
+                layer="historical", kind="krx_history", manifest=False
+            )
+        }
+        with patch("app.history_recovery.krx.enabled", return_value=True), \
+             patch("app.history_recovery.krx.catchup_dates", return_value=days), \
+             patch("app.history_recovery.krx.dataset_specs", return_value=[base]):
+            history_recovery.ensure_targets()
+            shallow = scopes()
+            history_recovery.ensure_targets()
+            self.assertEqual(shallow, scopes())  # repeat adds nothing
+
+        deep = {**base, "history_days": 6}
+        with patch("app.history_recovery.krx.enabled", return_value=True), \
+             patch("app.history_recovery.krx.catchup_dates", return_value=days), \
+             patch("app.history_recovery.krx.dataset_specs", return_value=[deep]):
+            history_recovery.ensure_targets()
+            extended = scopes()
+            history_recovery.ensure_targets()
+            self.assertEqual(extended, scopes())
+
+        self.assertEqual(set(days), shallow)
+        self.assertTrue(shallow < extended)
+        self.assertEqual(max(days), max(extended))   # never forward
+        self.assertLess(min(extended), min(days))    # only backward
+
+    def test_history_depth_is_a_budget_not_part_of_target_identity(self):
+        """Changing depth must not re-arm every KRX target.
+
+        The fingerprint is what re-arms a target. A depth change that touched
+        it would repeat the 843-target re-arm that left the system degraded
+        for three days.
+        """
+        shallow = next(
+            item for item in krx.DATASETS if item["dataset"] == "drvprod_dd_trd"
+        )
+        deep = {**shallow, "history_days": 750}
+        source_spec = lambda spec: {  # noqa: E731
+            "source": "krx", "dataset": spec["dataset"], "path": spec["path"],
+        }
+        self.assertEqual(
+            history_recovery._target_fingerprint(
+                "krx_history", shallow["dataset"], source_spec(shallow)
+            ),
+            history_recovery._target_fingerprint(
+                "krx_history", deep["dataset"], source_spec(deep)
+            ),
+        )
+
     def test_krx_401_stops_remaining_dates_in_the_same_history_batch(self):
         db.init_db()
         spec = next(item for item in krx.DATASETS if item["dataset"] == "stk_bydd_trd")

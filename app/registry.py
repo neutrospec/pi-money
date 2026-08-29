@@ -359,22 +359,7 @@ def _store_krx_aggregates(
     contracts they are derived from are stored in full by the caller, and a
     failure here is reported without disowning them.
     """
-    points = []
-    try:
-        if spec.get("aggregate") == "put_call":
-            points = krx.aggregate_put_call(raw_rows, day)
-        elif spec.get("aggregate") == "named_index":
-            points = krx.extract_named_indices(raw_rows, day)
-        for point in points:
-            db.save_indicator_points(
-                point["indicator"],
-                [{"date": point["date"], "value": point["value"]}],
-                source="krx",
-            )
-    except Exception as exc:  # the rows this was derived from remain valid
-        if errors is not None and key:
-            errors[f"{key}#aggregate"] = f"{type(exc).__name__}: {exc}"
-        log.warning("KRX aggregate failed for %s %s: %s", spec["dataset"], day, exc)
+    history_recovery.store_krx_aggregates(spec, raw_rows, day, errors, key)
 
 
 def _event_version() -> str:

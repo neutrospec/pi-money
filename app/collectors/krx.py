@@ -22,7 +22,7 @@ BASE_URL = "https://data-dbg.krx.co.kr/svc/apis"
 
 def _spec(
     dataset: str, path: str, label: str, asset_type: str, tier: str,
-    aggregate: str | None = None,
+    aggregate: str | None = None, history_days: int | None = None,
 ) -> dict:
     return {
         "dataset": dataset,
@@ -30,6 +30,14 @@ def _spec(
         "label": label,
         "asset_type": asset_type,
         "tier": tier,
+        # How deep the second-line layer backfills this table. Per dataset
+        # because the cost is per dataset: the option table is ~9,000 rows a
+        # session and the derivative index table is ~320, so one shared depth
+        # either starves the cheap table or bloats the expensive one. None
+        # means the layer's default. This is a collection budget, not part of
+        # a target's identity — it must stay out of the recovery fingerprint,
+        # or changing it would re-arm every KRX target.
+        "history_days": history_days,
         # Some provider tables also yield a market-wide statistic that no
         # single row carries.  The tag adds a summary alongside the rows; it
         # never replaces them, because a contract we discard today cannot be
@@ -48,8 +56,10 @@ DATASETS = [
     # VKOSPI arrives as one row among 320 derivative indices. Promoting it to
     # an indicator series is what makes it addressable by name instead of
     # requiring every consumer to know the row it hides in.
+    # A year of this table is ~80,000 rows and it carries VKOSPI, which two
+    # gauges need a distribution for. The option table stays shallow.
     _spec("drvprod_dd_trd", "idx/drvprod_dd_trd", "파생상품지수", "derivative_index",
-          "balanced", aggregate="named_index"),
+          "balanced", aggregate="named_index", history_days=250),
     _spec("stk_bydd_trd", "sto/stk_bydd_trd", "유가증권", "stock", "balanced"),
     _spec("ksq_bydd_trd", "sto/ksq_bydd_trd", "코스닥", "stock", "balanced"),
     _spec("knx_bydd_trd", "sto/knx_bydd_trd", "코넥스", "stock", "balanced"),
@@ -112,6 +122,23 @@ def dataset_specs(scope: str | None = None) -> list[dict]:
         "all": {"light", "balanced", "all"},
     }[scope]
     return [spec.copy() for spec in DATASETS if spec["tier"] in allowed]
+
+
+def history_dates(count: int, end: str) -> list[str]:
+    """``count`` weekdays ending at ``end`` (inclusive), oldest first.
+
+    Separate from ``catchup_dates`` on purpose. That one walks back from today
+    and is capped at 20 to protect first-line collection; this one walks back
+    from a fixed anchor so raising a dataset's configured depth extends the
+    historical generation backwards only, never forwards.
+    """
+    cursor = date.fromisoformat(end)
+    days: list[str] = []
+    while len(days) < max(1, count):
+        if cursor.weekday() < 5:
+            days.append(cursor.isoformat())
+        cursor -= timedelta(days=1)
+    return list(reversed(days))
 
 
 def catchup_dates(count: int | None = None, today: date | None = None) -> list[str]:
@@ -291,6 +318,40 @@ def extract_named_indices(rows: list[dict], day: str) -> list[dict]:
             continue
         points.append({"indicator": key, "date": _iso_day(day), "value": value})
     return points
+
+
+PUT_CALL_MEASURES = ("volume", "value", "open_interest")
+
+
+def aggregate_indicator_keys(spec: dict) -> set[str]:
+    """Which indicator series this dataset's aggregate can produce.
+
+    Lets an audit ask "does this stored day already have its derived series?"
+    without parsing the day's rows first.
+    """
+    kind = spec.get("aggregate")
+    if kind == "put_call":
+        return {f"kr_put_call_{measure}" for measure in PUT_CALL_MEASURES}
+    if kind == "named_index":
+        return set(NAMED_INDICES.values())
+    return set()
+
+
+def derive_aggregate_points(spec: dict, rows: list[dict], day: str) -> list[dict]:
+    """Market-wide series a bulk table implies but no single row carries.
+
+    Both collection layers derive these, so the dispatch lives here rather
+    than in either caller: a layer that stored the rows without the series it
+    implies would leave the table complete and the gauge empty, which is
+    exactly how VKOSPI ended up with five observations behind twenty days of
+    stored rows.
+    """
+    kind = spec.get("aggregate")
+    if kind == "put_call":
+        return aggregate_put_call(rows, day)
+    if kind == "named_index":
+        return extract_named_indices(rows, day)
+    return []
 
 
 def aggregate_put_call(rows: list[dict], day: str) -> list[dict]:
