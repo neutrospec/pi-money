@@ -1,6 +1,6 @@
 # Tool guide
 
-MCP and pi expose the same 22 canonical capabilities. MCP reads SQLite
+MCP and pi expose the same 25 canonical capabilities. MCP reads SQLite
 directly; pi calls the matching cache-only REST endpoint.
 
 | Tool | Use it for | Important inputs |
@@ -27,6 +27,9 @@ directly; pi calls the matching cache-only REST endpoint.
 | `market_regime` | Two rule-based regime readings. Top level is the US one (VIX/credit/S&P); `korea_regime` is the Korean one, scored by percentile against each input's own distribution | none |
 | `market_derived_metrics` | Aligned macro transformations and 20/60-day cross-asset relative strength | none |
 | `market_breadth` | KOSPI/KOSDAQ advance-decline, turnover, concentration, and bounded 20-day breadth | none |
+| `market_layers` | The five evidence layers — policy, growth, liquidity, credit, breadth — with per-layer confidence. Use it for "what part of the economy is saying what" rather than "what contradicts what" | none |
+| `market_replay` | The verdicts this repository could have produced on a past date. Use it to check whether a reading would have held at the time; never to claim it did | `date` (YYYY-MM-DD, KST); `mode`: `observed` (default) or `vintage` |
+| `market_replay_readiness` | From which date each brief input can be replayed. Read this before quoting a vintage replay | none |
 
 ## Identifier rules
 
@@ -66,6 +69,47 @@ the disagreement between components, not the headline number:
   standing on four of seven components deserves a stated caveat.
 - Do not compare the score to CNN's Fear & Greed. Different inputs, different
   thresholds, different market.
+
+## Reading the five layers
+
+`market_layers` cuts the catalogue by *what a series is evidence of* rather
+than by what contradicts what. Two things about it are easy to misread:
+
+- **The policy layer abstains, and that is not neutrality.** Every policy-rate
+  and inflation series declares its direction as `neutral` on purpose: a rate
+  rise is tightening or it is a recovering economy, and a percentile cannot
+  tell which. That card reports level and weekly travel only. Never render its
+  silence as "policy is neutral".
+- **`split: true` is the finding.** A layer holding evidence that points both
+  ways carries more information than its net score. Quote the split.
+
+`confidence` never changes a verdict. It says how much of the expected
+evidence reported and how much arrived past its own update cycle, counted
+separately because the causes differ — one is a collector problem, the other
+is a publication schedule nobody controls.
+
+## Reading a point-in-time replay
+
+`market_replay` runs the same verdict code against a past date. It answers
+"would this reading have held at the time", and only within stated limits.
+
+- `observed` filters by observation date. It blocks look-ahead, every table
+  supports it, and it does **not** undo revisions — a value corrected later
+  reads as though we always had the correction.
+- `vintage` uses only values received by the end of that day, so it also
+  catches revision. Only `indicator_vintages` supports it, and only from
+  2026-08-23. Call `market_replay_readiness` first: most inputs still hold
+  about five vintage observations against a minimum of sixty, and their
+  replayed components report as pending rather than guessing.
+- Index prices, KRX bulk tables, and the catalogue's own contents cannot be
+  reconstructed at all. The leak report lists them under `unchecked`, which
+  means "not looked at", never "clean".
+- `not_replayed` names the brief sections that read the live cache regardless
+  of mode — sentiment and movers. Do not quote them as part of a past reading.
+
+A replay standing on partial coverage is a partial verdict. `coverage.complete`
+says whether it is, and a partial one must not be quoted as what the system
+would have said.
 
 ## Reading a coverage result
 

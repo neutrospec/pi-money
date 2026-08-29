@@ -638,6 +638,92 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
+	// 다섯 층별 근거
+	pi.registerTool({
+		name: "market_layers",
+		label: "층별 근거",
+		description:
+			"정책·경기·유동성·신용·시장폭 다섯 층으로 카탈로그를 다시 잘라 각 층이 " +
+			"무엇을 말하는지와 그 판정이 몇 개의 근거 위에 서 있는지를 보고한다. " +
+			"정책 층은 판정하지 않는다 — 금리·물가 계열이 상승의 의미를 선언하지 " +
+			"않았고, 금리 상승이 긴축인지 경기 회복인지는 백분위가 답할 수 없기 " +
+			"때문이다. 그 침묵을 중립으로 읽지 말 것.",
+		parameters: Type.Object({}),
+		async execute() {
+			const data = await apiGet("/api/layers");
+			const lines = data.layers.map((layer: any) =>
+				`${layer.label}: ${layer.stance}${layer.mode === "stance" ? ` (순점수 ${layer.score})` : ""}` +
+				` · 신뢰도 ${layer.confidence.level} (${layer.confidence.voted}/${layer.confidence.expected}` +
+				`${layer.confidence.stale ? `, 지연 ${layer.confidence.stale}` : ""})` +
+				`${layer.split ? " · 내부 갈림" : ""}\n  ${layer.reading}`,
+			);
+			return {
+				content: [{ type: "text", text: [data.agreement, ...lines].join("\n") }],
+				details: data,
+			};
+		},
+	});
+
+	// 과거 시점 재생
+	pi.registerTool({
+		name: "market_replay",
+		label: "과거 시점 재생",
+		description:
+			"그날의 데이터만으로 같은 판정 코드를 돌린다. observed 는 관측일만 " +
+			"잘라 선견 누출을 막고 모든 표가 지원한다. vintage 는 그 순간까지 실제로 " +
+			"받은 값만 써서 개정 누출까지 잡지만 빈티지 원장(2026-08-23 시작)만 " +
+			"지원한다. vintage 판정을 인용하기 전에 market_replay_readiness 를 " +
+			"먼저 볼 것 — 원장이 얇으면 구성요소가 판정하지 않고 보류로 남는다.",
+		parameters: Type.Object({
+			date: Type.String({ description: "재생할 날짜 (YYYY-MM-DD, KST)" }),
+			mode: Type.Optional(
+				Type.String({ description: "observed (기본) 또는 vintage" }),
+			),
+		}),
+		async execute({ date, mode }: { date: string; mode?: string }) {
+			const data = await apiGet(
+				`/api/replay?date=${encodeURIComponent(date)}` +
+					(mode ? `&mode=${encodeURIComponent(mode)}` : ""),
+			);
+			const text = [
+				`${data.as_of} (${data.mode}) — 한국 ${data.korea_regime.regime} ` +
+					`(순점수 ${data.korea_regime.score}, ${data.korea_regime.component_count}/${data.korea_regime.component_total})` +
+					` · 미국 ${data.regime.regime} (순점수 ${data.regime.score})`,
+				data.coverage
+					? `빈티지 커버리지 ${data.coverage.usable}/${data.coverage.requested}` +
+						(data.coverage.complete ? "" : " — 부분 재생이다")
+					: "",
+				data.warning,
+			].filter(Boolean);
+			return { content: [{ type: "text", text: text.join("\n") }], details: data };
+		},
+	});
+
+	pi.registerTool({
+		name: "market_replay_readiness",
+		label: "재생 준비도",
+		description:
+			"계열마다 언제부터 재생 가능한지. 추정이 아니라 원장에 이미 적힌 " +
+			"사실이다 — N번째 관측이 도착한 시각이 곧 깊이가 채워진 시각이고, " +
+			"사후 백필은 그 이후의 모든 날짜를 재생 가능하게 만든다.",
+		parameters: Type.Object({}),
+		async execute() {
+			const data = await apiGet("/api/replay/readiness");
+			const lines = data.series.map(
+				(s: any) => `${s.key}: 관측 ${s.observations}/${s.minimum} — ${s.note}`,
+			);
+			const head =
+				`원장 ${data.ledger_began} 시작 · 오늘 재생 가능 ${data.usable}/${data.requested}` +
+				(data.complete_from
+					? ` · 전체 재생 ${data.complete_from}부터`
+					: ` · 전체 재생 불가 (대기 ${data.waiting.length}개)`);
+			return {
+				content: [{ type: "text", text: [head, ...lines].join("\n") }],
+				details: data,
+			};
+		},
+	});
+
 	// KRX 시장폭
 	pi.registerTool({
 		name: "market_breadth",

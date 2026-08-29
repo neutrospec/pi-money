@@ -13,7 +13,7 @@ from mcp.server import MCPServer
 
 from app import (
     analysis, brief as brief_module, correlation, coverage, dashboard, db,
-    explain, history_recovery, market_metrics, normalize,
+    explain, history_recovery, layers, market_metrics, normalize, pit,
     sentiment as sentiment_gauge, spillover as spillover_analysis,
 )
 from app.collectors import indices, indicators
@@ -130,6 +130,68 @@ def market_brief() -> dict:
     vote so an absence is never read as a neutral opinion.
     """
     return brief_module.brief()
+
+
+@mcp.tool()
+def market_layers() -> dict:
+    """Report the five evidence layers — policy, growth, liquidity, credit, breadth.
+
+    Use this when the question is about *what part of the economy* is saying
+    what, rather than what is contradicting what. Each layer collects the
+    catalogue series that are evidence of it and reports where they sit in
+    their own distributions.
+
+    Four layers vote; the policy layer does not, and abstains explicitly. Its
+    series declare no risk direction because a rate rise is tightening or it is
+    a recovering economy and a percentile cannot tell which — so that card
+    reports level and travel only. Do not read its silence as neutrality.
+
+    Every layer carries a confidence: how much of its expected evidence
+    reported, and how much of that arrived past its own update cycle. The
+    confidence never changes a verdict; it says how thick the base under one
+    is. A layer whose ``split`` is true holds evidence pointing both ways, and
+    that is a finding rather than something to average.
+    """
+    return layers.cards()
+
+
+@mcp.tool()
+def market_replay(date: str, mode: str = "observed") -> dict:
+    """Report the verdicts this repository could have produced on a past date.
+
+    Use this to check whether a reading would have held up at the time, never
+    to claim it did. Two modes and they answer different questions.
+
+    ``observed`` uses only observations dated on or before that day. It blocks
+    look-ahead and every table supports it. It does not undo revisions: a value
+    corrected after the fact reads here as though we always had the correction.
+
+    ``vintage`` uses only values actually received by the end of that day, so
+    it also catches revision — but only ``indicator_vintages`` supports it and
+    only from 2026-08-23. When the ledger is too thin the components report as
+    pending rather than guessing, and ``coverage`` says how thin.
+
+    Index prices, KRX bulk tables and the catalogue's own contents cannot be
+    reconstructed at all; the module docstring lists why. Call
+    ``market_replay_readiness`` before quoting a vintage replay as a verdict.
+    """
+    return pit.replay(date, mode)
+
+
+@mcp.tool()
+def market_replay_readiness() -> dict:
+    """Report from which date each brief input can be replayed.
+
+    Not a projection. Most of the vintage ledger arrived as bulk backfill, and
+    a backfill makes every date *after* it replayable at full depth while
+    making no earlier date replayable at all — so the date depth was reached is
+    simply when the Nth observation arrived, which the ledger already records.
+
+    Read this before trusting ``market_replay`` in vintage mode. A series in
+    ``waiting`` has not accumulated enough history for a distribution, and its
+    replayed components will report as pending.
+    """
+    return pit.readiness()
 
 
 @mcp.tool()
