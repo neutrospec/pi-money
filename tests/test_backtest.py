@@ -262,6 +262,77 @@ class PriceRuleTests(TemporaryDatabaseTest):
         self.assertIn("홀드아웃", report["reason"])
 
 
+class StratifiedTests(unittest.TestCase):
+    """Pooled lift credits being switched on during bad years. Stratified does not."""
+
+    def rows(self, spec):
+        return [{"date": day, "korea_regime": verdict} for day, verdict in spec]
+
+    def test_pooling_across_periods_with_different_base_rates_manufactures_lift(self):
+        # A classifier with zero within-year skill: inside each year it warns
+        # on exactly the same share of stress days as the base rate. Pooled it
+        # still shows lift, because it warns in the dangerous year and not in
+        # the calm one. This is the artifact, reproduced in eight rows.
+        spec, outcomes = [], {}
+        for index in range(10):     # dangerous year: 80% stress, all warned
+            day = f"2020-01-{index + 1:02d}"
+            spec.append((day, "risk_off"))
+            outcomes[day] = {"drawdown_pct": -10.0 if index < 8 else -1.0,
+                             "return_pct": 0.0}
+        for index in range(10):     # calm year: 10% stress, never warned
+            day = f"2021-01-{index + 1:02d}"
+            spec.append((day, "neutral"))
+            outcomes[day] = {"drawdown_pct": -10.0 if index < 1 else -1.0,
+                             "return_pct": 0.0}
+        rows = self.rows(spec)
+        pooled = backtest.contingency(rows, outcomes, field="korea_regime")
+        report = backtest.stratified(rows, outcomes, field="korea_regime")
+        self.assertGreater(pooled["lift"], 20)
+        # Inside its own year the warning added nothing: it fired on every day,
+        # so its precision equals that year's base rate exactly.
+        self.assertEqual(0.0, report["year"]["weighted_lift"])
+
+    def test_episodes_are_counted_as_runs_not_days(self):
+        rows = self.rows([
+            ("2020-01-01", "risk_off"), ("2020-01-02", "risk_off"),
+            ("2020-01-03", "neutral"),
+            ("2020-01-04", "risk_off"),
+        ])
+        runs = backtest.episodes(rows, field="korea_regime")
+        self.assertEqual([2, 1], [len(run) for run in runs])
+
+    def test_the_stratified_report_names_how_many_strata_favour_the_claim(self):
+        rows = self.rows([("2020-01-01", "risk_off"), ("2021-01-01", "risk_off")])
+        outcomes = {"2020-01-01": {"drawdown_pct": -10.0, "return_pct": 0.0},
+                    "2021-01-01": {"drawdown_pct": -1.0, "return_pct": 0.0}}
+        report = backtest.stratified(rows, outcomes, field="korea_regime")
+        self.assertEqual(2, report["year"]["with_warnings"])
+        self.assertEqual(0, report["year"]["positive"])
+
+
+class TimingTests(unittest.TestCase):
+    """A lead that cannot exceed the search window is not a lead."""
+
+    def test_the_run_age_is_not_capped_by_the_horizon(self):
+        # The old measure searched back only HORIZON_DAYS, so median == max ==
+        # cap was the signature of censoring being read as central tendency.
+        span = backtest.HORIZON_DAYS * 3
+        rows = [{"date": f"2020-{1 + day // 28:02d}-{day % 28 + 1:02d}",
+                 "korea_regime": "risk_off"} for day in range(span)]
+        outcomes = {rows[-1]["date"]: {"drawdown_pct": -10.0, "return_pct": 0.0}}
+        report = backtest.timing(rows, outcomes, field="korea_regime")
+        self.assertEqual(span - 1, report["run_age"]["best"])
+        self.assertGreater(report["run_age"]["best"], backtest.HORIZON_DAYS)
+
+    def test_a_stress_day_with_no_warning_running_is_counted_unwarned(self):
+        rows = [{"date": "2020-01-01", "korea_regime": "neutral"}]
+        outcomes = {"2020-01-01": {"drawdown_pct": -10.0, "return_pct": 0.0}}
+        report = backtest.timing(rows, outcomes, field="korea_regime")
+        self.assertEqual((1, 0, 1), (report["stress_days"],
+                                     report["warned_on_the_day"],
+                                     report["unwarned"]))
+
+
 class ChurnTests(unittest.TestCase):
     def test_run_lengths_are_reported_not_just_a_change_count(self):
         rows = [{"korea_regime": name} for name in

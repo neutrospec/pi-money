@@ -660,6 +660,45 @@ def by_completeness(verdicts: list[dict], outcomes: dict[str, dict], *,
     return out
 
 
+# From which date the recent-period caveat is measured. Declared rather than
+# chosen after the fact: it is the year the deep-history record stops showing
+# any hits, not a boundary picked to make a number look a particular way.
+RECENT_FROM = "2023-01-01"
+
+
+def _recent_caveat(verdicts: list[dict], outcomes: dict[str, dict], *,
+                   field: str) -> dict | None:
+    """What the warning has actually done lately, in one sentence.
+
+    A backtest read once and forgotten is not much use if the screen it sits
+    beside keeps showing a warning that the same backtest says is inverted.
+    This travels with the result so the caveat reaches the live reader.
+    """
+    recent = [row for row in verdicts if row["date"] >= RECENT_FROM]
+    warned = [row for row in recent
+              if row[field] == WARNING and row["date"] in outcomes]
+    if not warned:
+        return None
+    returns = [outcomes[row["date"]]["return_pct"] for row in warned]
+    hits = sum(1 for row in warned
+               if outcomes[row["date"]]["drawdown_pct"] <= -DRAWDOWN_PCT)
+    return {
+        "since": RECENT_FROM,
+        "warnings": len(warned),
+        "hits": hits,
+        "median_forward_return": round(median(returns), 2),
+        "negative_forward_returns": sum(1 for value in returns if value < 0),
+        "text": (
+            f"{RECENT_FROM} 이후 경고 {len(warned)}건의 적중은 {hits}건이고, "
+            f"전방 {HORIZON_DAYS}세션 수익률 중앙값은 "
+            f"{median(returns):+.2f}%입니다"
+            + (" — 음수인 경우가 하나도 없습니다."
+               if not any(value < 0 for value in returns) else ".")
+            + " 지금 화면의 경고를 하락 근거로 삼지 마세요."
+        ),
+    }
+
+
 def report(field: str = "korea_regime") -> dict:
     """Everything above for one classifier, with its limits attached."""
     market = "korea" if field.startswith("korea") else "us"
@@ -700,6 +739,11 @@ def report(field: str = "korea_regime") -> dict:
         # from ^KS11 and there is no equivalent for the US classifier.
         "out_of_window": out_of_window(symbol) if market == "korea" else None,
         "timing": timing(verdicts, outcomes, field=field),
+        # A caveat that has to reach whoever is looking at a live warning, not
+        # only whoever reads the backtest. Since 2023 the warning has been
+        # inverted, and a reader who sees risk_off on the brief today has no
+        # other way to learn that.
+        "recent_caveat": _recent_caveat(verdicts, outcomes, field=field),
         "limits": [
             "판정 " + str(len(verdicts)) + "일 중 채점 가능한 날은 "
             + str(contingency(verdicts, outcomes, field=field)["days"]) + "일입니다. "

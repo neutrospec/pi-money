@@ -94,15 +94,33 @@ is a publication schedule nobody controls.
 `market_backtest` grades each replayed verdict against what the benchmark did
 next. Three rules for quoting it:
 
+- **Stratified before pooled.** `stratified` sits beside `contingency` and the
+  gap between them is the finding, not a detail. Over 2007-2026 the pooled lift
+  is +13.9 and the by-year figure is +3.4, by-quarter +0.7, by-half-year -1.0.
+  Pooled lift credits the classifier for being switched on during dangerous
+  years; stratified lift only credits picking dangerous days within a year.
+  When they diverge, quote the stratified number.
 - **Lift before precision.** Lift is precision minus the base rate — what the
-  warning added over knowing nothing. Precision of 20% against an 18.6% base
-  rate is noise wearing a respectable number, and only the pair shows it. Never
-  quote precision alone.
+  warning added over knowing nothing. Precision of 27% against a 13.5% base
+  rate looks like skill and is not, once stratified. Never quote precision
+  alone.
+- **Episodes, not days.** `stratified.episodes` is the unit of evidence.
+  625 warned days are 44 runs, only 12 of which contain a hit; outcome windows
+  overlap 20 sessions, so any independent-day statistic is anti-conservative.
 - **`conditional` is the threshold-free half** and usually says more. If the
   verdicts share a forward distribution, the classifier separates nothing and
   no choice of stress threshold rescues that.
 - **Count episodes, not days.** Consecutive warning days are one event. A
   statistic built on 22 days that are really 7 episodes has the power of 7.
+
+`recent_caveat` must be repeated whenever a live risk_off verdict is discussed:
+since 2023-01-01 the warning has 0 hits in 41 warnings and a median forward
+20-session return of +4.86% with no negative case. A reader looking at today's
+brief cannot learn that anywhere else.
+
+`out_of_window` reports `available: false` — the 2026-08-30 history backfill
+extended the replay to 2007 and consumed the holdout it used to test against.
+That is a stated limit, not a passed test.
 
 `limits` travels with the result: look-ahead is controlled, revision leak is
 not, and the thresholds are evaluated rather than tuned. A result suggesting

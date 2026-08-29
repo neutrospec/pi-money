@@ -35,6 +35,13 @@
     <div style="color:#6e7681;font-size:11px;margin-top:10px;">{{ r.warning }}</div>
   </div>
 
+  {% if r.recent_caveat %}
+  <div class="card" style="border-left:4px solid #f85149;">
+    <div class="card-title">지금 경고를 보고 계신다면</div>
+    <div style="font-size:14px;color:#c9d1d9;line-height:1.7;">{{ r.recent_caveat.text }}</div>
+  </div>
+  {% endif %}
+
   <div class="card">
     <div class="card-title">오탐·미탐
       <span style="color:#8b949e;font-weight:400;font-size:12px;">정밀도는 기저율과 함께 읽어야 뜻이 생깁니다</span></div>
