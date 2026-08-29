@@ -85,7 +85,7 @@ flowchart TD
 
 `app/collectors/krx.py`는 개별 심볼 목록을 갖지 않습니다. KRX의 날짜별 시장 테이블 한 건을 요청해 응답의 모든 행을 저장하고, 처음 본 종목을 `market_instruments`에 자동 등록합니다.
 
-- 기본 `balanced`: 14개 데이터셋, 전체 지수군·KOSPI/KOSDAQ/KONEX 주식·ETF/ETN·일반상품
+- 기본 `balanced`: 16개 데이터셋, 전체 지수군·KOSPI/KOSDAQ/KONEX 주식·ETF/ETN·일반상품
 - `light`: 7개 데이터셋, 대표 지수군·ETF·일반상품
 - `all`: KRX 공개 카탈로그 31개 데이터셋. ELW·채권·선물·옵션·ESG까지 포함
 - 최초 최근 5거래일만 채우고 이후 일별 증분 수집

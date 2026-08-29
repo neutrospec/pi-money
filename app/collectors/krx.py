@@ -82,11 +82,15 @@ DATASETS = [
     _spec("ksq_isu_base_info", "sto/ksq_isu_base_info", "코스닥 기본정보", "stock", "all"),
     _spec("knx_isu_base_info", "sto/knx_isu_base_info", "코넥스 기본정보", "stock", "all"),
     _spec("elw_bydd_trd", "etp/elw_bydd_trd", "ELW", "elw", "all"),
-    _spec("kts_bydd_trd", "bon/kts_bydd_trd", "국채전문유통시장", "bond", "all",
+    # 하루 12행뿐인데 한국의 유일한 선행 물가 계열(핵심 kr_breakeven_10y)과
+    # 국고채 20년을 켭니다. 핵심 계열이 기본값 아닌 설정에 의존하면
+    # 문서대로 설치한 사람이 그 계열을 영영 못 받습니다.
+    _spec("kts_bydd_trd", "bon/kts_bydd_trd", "국채전문유통시장", "bond", "balanced",
           aggregate="govbond", history_days=250),
     _spec("bnd_bydd_trd", "bon/bnd_bydd_trd", "일반채권시장", "bond", "all"),
     _spec("smb_bydd_trd", "bon/smb_bydd_trd", "소액채권시장", "bond", "all"),
-    _spec("fut_bydd_trd", "drv/fut_bydd_trd", "선물", "future", "all",
+    # 하루 303행으로 코스피200 선물 미결제·베이시스를 켭니다.
+    _spec("fut_bydd_trd", "drv/fut_bydd_trd", "선물", "future", "balanced",
           aggregate="futures", history_days=250),
     _spec("eqsfu_stk_bydd_trd", "drv/eqsfu_stk_bydd_trd", "유가 주식선물", "future", "all"),
     _spec("eqkfu_ksq_bydd_trd", "drv/eqkfu_ksq_bydd_trd", "코스닥 주식선물", "future", "all"),

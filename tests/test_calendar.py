@@ -272,6 +272,23 @@ class KrxTests(unittest.TestCase):
         self.assertNotIn("eqsop_bydd_trd", datasets)
         self.assertEqual(31, len(krx.dataset_specs("all")))
 
+    def test_the_default_scope_collects_every_series_it_promises(self):
+        """A catalogued series must not depend on a non-default setting.
+
+        M6.3 tagged aggregates onto two `all`-tier tables, so a fresh install
+        following the setup guide would have collected everything it was told
+        to and still never received `kr_breakeven_10y` — a core series and the
+        only forward-looking Korean inflation reading there is.
+        """
+        catalog = indicators.catalog()
+        default_keys = set()
+        for spec in krx.dataset_specs("balanced"):
+            default_keys |= krx.aggregate_indicator_keys(spec)
+        catalogued = {
+            key for key, value in catalog.items() if value["source"] == "krx"
+        }
+        self.assertEqual([], sorted(catalogued - default_keys))
+
     def test_every_aggregation_tag_has_a_summariser_and_a_key_set(self):
         """A tag with no handler stores rows and silently no series.
 
