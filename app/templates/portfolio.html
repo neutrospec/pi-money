@@ -3,7 +3,9 @@
 {% block content %}
   <div class="pagehead">
     <h1>💼 자산</h1>
-    <div class="sub">계좌별 보유와 제도 제약 · {{ p.as_of }} (KST)</div>
+    <div class="sub">계좌 {{ p.accounts|length }} · 보유 {{ p.holding_count }}건 ·
+      기준 {{ p.as_of }} (KST){% if p.price_as_of %} · 가격 {{ p.price_as_of }}{% endif %} ·
+      계좌번호는 저장하지 않습니다</div>
   </div>
 
   {% if p.empty %}
@@ -12,104 +14,218 @@
     <div style="font-size:13px;color:#c9d1d9;line-height:1.7;">
       아래에서 계좌를 추가하면 시작됩니다. 입력은 <b>이 컴퓨터에서만</b> 받습니다 —
       다른 기기나 외부 페이지에서 온 요청은 거부합니다.
-      <b>계좌번호는 아예 저장하지 않습니다</b>, 에이전트에도 쓰기 도구가 없습니다.
+      <b>계좌번호는 아예 저장하지 않습니다.</b>
+      <div class="note">{{ p.warning }}</div>
     </div>
   </div>
-  {% endif %}
+  {% else %}
 
-  {% if not p.empty %}
+  {# Accounts as one strip. Five stacked cards made five accounts
+     incomparable and put the type in 12px grey inside a title. #}
+  <div class="acctbar">
+    <button class="on" data-acct="" onclick="pick('')">전체
+      <span class="meta">계좌 {{ p.accounts|length }} · 보유 {{ p.holding_count }}건</span></button>
+    {% for a in p.accounts %}
+    <button data-acct="{{ a.id }}" onclick="pick('{{ a.id }}')">{{ a.label }}
+      <span class="meta">{{ a.type_label }} · {{ a.as_of[5:] if a.as_of else '스냅샷 없음' }}{% if a.check %} · 확인 {{ a.check }}{% endif %}</span></button>
+    {% endfor %}
+  </div>
 
-  {% for a in p.accounts %}
+  {# Where an HTS prints 총평가금액. This prints the grid of numbers that
+     single figure would have destroyed — one column per (등급, 통화), never
+     a row or column of totals. #}
   <div class="card">
-    <div class="card-title">{{ a.label }}
-      <span style="color:#8b949e;font-weight:400;font-size:12px;">{{ a.institution }} · {{ a.type_label }}</span>
-      {% if a.as_of %}<span style="color:#6e7681;font-weight:400;font-size:12px;">기준 {{ a.as_of }}{% if a.stale_days and a.stale_days > 7 %} · {{ a.stale_days }}일 경과{% endif %}</span>{% endif %}
-    </div>
-
-    {% if not a.as_of %}
-    <div style="font-size:13px;color:#8b949e;">보유 스냅샷이 없습니다. <code>import</code>로 적재하세요.</div>
-    {% else %}
-
-    <div class="scroll"><table>
-      <thead><tr><th>등급</th><th>통화</th><th class="num">금액</th><th class="num">건수</th></tr></thead>
+    <div class="card-title">계좌 평가</div>
+    <div class="scroll"><table class="dense">
+      <thead><tr>
+        <th>계좌</th><th>유형</th><th>기준일</th>
+        {% for c in p.bucket_cols %}<th class="num">{{ c.label }}<br><span class="meta">{{ c.currency }}</span></th>{% endfor %}
+        <th class="num">미상</th><th class="num">충돌</th>
+        <th>매수 불가</th><th>위험자산 비중</th>
+      </tr></thead>
       <tbody>
-      {% for b in a.valuation.buckets %}
-      <tr>
-        <td>{{ p.grade_labels[b.grade] }}</td>
-        <td>{{ b.currency }}</td>
-        <td class="num">{% if b.grade == 'unpriced' %}<span style="color:#8b949e;">—</span>{% else %}{{ '{:,.0f}'.format(b.amount) }}{% endif %}</td>
-        <td class="num">{{ b.holdings }}</td>
+      {% for a in p.accounts %}
+      <tr class="h" data-acct="{{ a.id }}">
+        <td>{{ a.label }}<span class="meta"> {{ a.institution }}</span></td>
+        <td>{{ a.type_label }}{% for l in a.lints %} <span class="chip warn" title="{{ l }}">확인</span>{% endfor %}</td>
+        <td>{% if a.as_of %}{{ a.as_of[5:] }}{% if a.stale_days and a.stale_days > 7 %} <i class="age">+{{ a.stale_days }}d</i>{% endif %}{% else %}<span class="dim">—</span>{% endif %}</td>
+        {% for c in p.bucket_cols %}
+        {% set cell = a.cells.get(c.key) %}
+        <td class="num">
+          {%- if not cell %}<span class="dim">·</span>
+          {%- elif c.grade == 'unpriced' %}<span class="chip warn">{{ cell.holdings }}건</span>
+          {%- else %}{{ '{:,.0f}'.format(cell.amount) }} <span class="meta">{{ cell.holdings }}</span>{% endif %}
+        </td>
+        {% endfor %}
+        <td class="num">{% if a.unknown %}<span class="chip warn">{{ a.unknown }}</span>{% else %}<span class="dim">·</span>{% endif %}</td>
+        <td class="num">{% if a.conflicts %}<span class="chip bad">{{ a.conflicts|length }}</span>{% else %}<span class="dim">·</span>{% endif %}</td>
+        <td>{% for g in a.gates %}<span class="chip dim">{{ g }}</span> {% else %}<span class="dim">제한 없음</span>{% endfor %}</td>
+        <td>
+          {%- if not a.risky.applicable %}<span class="dim">·</span>
+          {%- elif a.risky.decidable %}현재 <b{% if a.risky.share_pct > a.risky.limit_pct %} class="sig-danger"{% endif %}>{{ a.risky.share_pct }}%</b> / 한도 {{ a.risky.limit_pct }}%
+            {%- if a.risky.share_pct > a.risky.limit_pct %} <span class="chip bad" title="위험자산 분류가 한도를 넘습니다 — 분류 입력을 확인하세요">확인</span>{% endif %}
+          {%- else %}<span class="sig-warn">{{ a.risky.reason }}</span> <span class="dim">· 한도 {{ a.risky.limit_pct }}%</span>{% endif %}
+        </td>
       </tr>
       {% endfor %}
       </tbody>
     </table></div>
-    <div style="font-size:11px;color:#6e7681;margin-top:6px;">{{ a.valuation.note }}</div>
+    <div class="legend">{{ p.valuation_note }}
+      한도와 현재 비중은 나란히 두되 <b>차이는 내지 않습니다</b> — 남은 여력은 행동
+      여력의 다른 이름입니다. 막대나 게이지를 두지 않은 것도 같은 이유입니다.</div>
+  </div>
 
-    {% if a.risky.applicable %}
-    <div style="margin-top:12px;padding:8px 12px;border-left:2px solid {% if a.risky.decidable %}#6e7681{% else %}#d29922{% endif %};">
-      <div style="font-size:13px;font-weight:600;">위험자산 비중</div>
-      {% if a.risky.decidable %}
-      <div style="font-size:14px;">현재 {{ a.risky.share_pct }}% / 한도 {{ a.risky.limit_pct }}%</div>
-      {% else %}
-      <div style="font-size:14px;color:#d29922;">{{ a.risky.reason }} · 한도 {{ a.risky.limit_pct }}%</div>
-      {% endif %}
-      <div style="font-size:11px;color:#8b949e;margin-top:4px;">{{ a.risky.limit_note }}</div>
+  {# The grid. Holdings used to sit behind a collapsed disclosure, so seeing
+     eight rows cost five clicks. #}
+  <div class="card">
+    <div class="card-title">잔고</div>
+    <div class="toolbar">
+      <input id="q" placeholder="종목·코드 찾기" oninput="apply()">
+      <button id="flagOnly" aria-pressed="false" onclick="toggleFlag()">확인 필요만</button>
+      <button onclick="openForm('fImport')">스냅샷 붙여넣기</button>
+      <span id="stat" class="meta">보이는 행 {{ p.holding_count }} / 전체 {{ p.holding_count }}</span>
     </div>
-    {% endif %}
-
-    {% if a.conflicts %}
-    <div style="margin-top:12px;">
-      {% for c in a.conflicts %}
-      <div style="font-size:12px;color:#d29922;">· {{ c.name }} — {{ c.detail }}</div>
+    <div class="scroll tall"><table class="dense" id="grid">
+      <thead><tr>
+        <th>종목</th><th>코드</th><th class="num">수량</th><th class="num">현재가</th>
+        <th class="num">전일대비</th><th class="num">등락률</th><th class="num">평가금액</th>
+        <th class="num">비중<br><span class="meta">계좌·통화 시장가분</span></th>
+        <th>가격일</th><th>위험</th><th>표</th>
+      </tr></thead>
+      <tbody>
+      {% for a in p.accounts %}
+        {% if not a.groups %}
+        <tr class="grp empty" data-acct="{{ a.id }}"><td colspan="11">
+          {{ a.label }} <span class="chip dim">{{ a.type_label }}</span>
+          보유 스냅샷이 없습니다
+          <button class="mini" onclick="snapPrefill('{{ a.id }}')">붙여넣기</button>
+        </td></tr>
+        {% endif %}
+        {% for g in a.groups %}
+        <tr class="grp" data-acct="{{ a.id }}" data-g="{{ a.id }}-{{ loop.index }}"><td colspan="11">
+          <b>{{ a.label }}</b> <span class="meta">{{ a.type_label }} · {{ a.as_of }}</span>
+          <span class="chip dim">{{ g.label }} {{ g.currency }}</span>
+          {% if g.grade == 'unpriced' %}<span class="chip warn">{{ g.count }}건 · 금액 없음</span>
+          {% else %}<b>{{ '{:,.0f}'.format(g.subtotal) }}</b> <span class="meta">{{ g.count }}건</span>{% endif %}
+        </td></tr>
+          {% for h in g.rows %}
+          <tr class="h" data-acct="{{ a.id }}" data-g="{{ a.id }}-{{ loop.index }}"
+              data-flag="{{ h.flag or '' }}" data-q="{{ (h.name ~ ' ' ~ h.symbol)|lower }}">
+            <td>{{ h.name }}
+              {%- for i in p.instruments %}{% if i.symbol == h.symbol and i.account_count > 1 %} <span class="chip dim">{{ i.account_count }}계좌</span>{% endif %}{% endfor %}
+              {%- if h.conflict %} <span class="chip bad">확인</span>{% endif %}</td>
+            <td class="mono">{{ h.symbol }}</td>
+            <td class="num">{{ '{:,.10g}'.format(h.quantity) if h.quantity is not none else '—' }}</td>
+            <td class="num">{{ '{:,.0f}'.format(h.price) if h.price is not none else '—' }}</td>
+            <td class="num {{ h.move_class }}">{{ '{:+,.0f}'.format(h.change) if h.change is not none else '—' }}</td>
+            <td class="num {{ h.move_class }}">{{ '%+.2f'|format(h.change_pct) if h.change_pct is not none else '—' }}</td>
+            <td class="num">{% if h.amount is none %}<span class="dim">평가 불가</span>{% else %}{{ '{:,.0f}'.format(h.amount) }}{% endif %}</td>
+            <td class="num">{{ h.weight_pct if h.weight_pct is not none else '—' }}</td>
+            <td>{% if h.price_date %}{{ h.price_date[5:] }}{% if h.price_age_days and h.price_age_days > 5 %} <i class="age">+{{ h.price_age_days }}d</i>{% endif %}{% else %}<span class="dim">—</span>{% endif %}</td>
+            <td>{% if h.is_risky_asset is none %}<span class="chip warn">미상</span>{% elif h.is_risky_asset %}위험{% else %}안전{% endif %}</td>
+            <td class="mono meta" title="{{ h.source }} · {{ h.dataset }}">{{ h.dataset_short or '—' }}</td>
+          </tr>
+          {% endfor %}
+        {% endfor %}
       {% endfor %}
+      </tbody>
+    </table></div>
+    <div class="legend">
+      <b>비중</b>은 같은 계좌·같은 통화에서 <b>시장가와 지연 시장가로 평가된 보유끼리의 몫</b>입니다.
+      사용자 입력과 평가 불가는 분모에 넣지 않고 비중도 내지 않습니다(—).
+      등급별 금액은 묶음 줄에만 나오고 등급이나 통화를 넘어 더하지 않습니다.
+      <b>전일대비·등락률은 가격일 기준</b>이며 오늘의 움직임이 아닙니다 — 지연된 종가의 등락은 회색으로 눕힙니다.
+      빨강이 상승, 초록이 하락입니다(국내 관례). <b>취득금액은 증권사가 준 값</b>이고 산정방식이 미상이라 평가액과 빼지 않습니다 — 수익률을 만들지 않습니다.
+      <div style="margin-top:6px;">{{ p.warning }}</div>
     </div>
-    {% endif %}
+  </div>
 
-    <details class="more"><summary>보유 {{ a.holdings | length }}건</summary>
-      <div class="scroll"><table>
-        <thead><tr><th>종목</th><th class="num">수량</th><th class="num">평가</th><th>등급</th><th>위험자산</th></tr></thead>
+  {% if p.instruments %}
+  <div class="card">
+    <div class="card-title">종목
+      <span class="card-sub" style="display:inline;">계좌를 가로질러 중복을 없앤 목록 · 노출 축을 여기서 답니다</span></div>
+    <div class="scroll"><table class="dense">
+      <thead><tr>
+        <th>종목</th><th>코드</th><th>표</th><th>보유 계좌</th>
+        <th class="num">수량 계</th><th class="num">현재가</th><th class="num">등락률</th>
+        <th>가격일</th><th>노출 축</th>
+      </tr></thead>
+      <tbody>
+      {% for i in p.instruments %}
+      <tr class="h">
+        <td>{{ i.name }}</td>
+        <td class="mono">{{ i.symbol }}</td>
+        <td class="mono meta" title="{{ i.source }} · {{ i.dataset }}">{{ i.dataset|replace('_bydd_trd','') }}</td>
+        <td>{{ i.account_count }}계좌 {% for label in i.accounts %}<span class="chip dim">{{ label }}</span> {% endfor %}</td>
+        <td class="num">{{ '{:,.10g}'.format(i.quantity_total) if i.quantity_total is not none else '—' }}</td>
+        <td class="num">{{ '{:,.0f}'.format(i.price) if i.price is not none else '—' }}</td>
+        <td class="num {{ i.move_class }}">{{ '%+.2f'|format(i.change_pct) if i.change_pct is not none else '—' }}</td>
+        <td>{{ i.price_date[5:] if i.price_date else '—' }}</td>
+        <td>{% for t in i.tags %}<span class="chip">{{ t }}</span> {% endfor %}
+          <button class="mini" onclick="tagPrefill('{{ i.source }}','{{ i.dataset }}','{{ i.symbol }}')">{{ '축 추가' if i.tags else '＋ 축 지정' }}</button></td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+    <div class="legend">
+      금액 열이 없습니다. 한 종목의 계좌를 가로지른 평가액은 유동성이 다른 돈을 한
+      숫자에 넣는 것이라 만들지 않습니다. <b>수량 계</b>는 모든 보유에 수량이 있을 때만
+      냅니다 — 같은 단위끼리의 합이라 평가가 아니고, 일부만 더하면 거짓이 됩니다.
+    </div>
+  </div>
+  {% endif %}
+
+  {% if p.types_in_use %}
+  <div class="card">
+    <div class="card-title">제도 · 매수 불가</div>
+    <details class="more">
+      <summary>현행 {{ p.types_in_use|map(attribute='policy')|map('length')|sum }}건 ·
+        정부안 {{ p.types_in_use|map(attribute='proposed')|map('length')|sum }}건</summary>
+      <table class="dense" style="margin-top:10px;">
+        <thead><tr><th>유형</th><th>매수 불가</th><th>현행 제도</th><th class="num">값</th><th>범위 · 시행</th></tr></thead>
         <tbody>
-        {% for h in a.holdings %}
-        <tr>
-          <td>{{ h.name }}<span style="color:#6e7681;font-size:11px;"> {{ h.symbol }}</span></td>
-          <td class="num">{{ h.quantity if h.quantity is not none else '—' }}</td>
-          <td class="num">{% if h.amount is none %}<span style="color:#8b949e;">평가 불가</span>{% else %}{{ '{:,.0f}'.format(h.amount) }} {{ h.currency }}{% endif %}</td>
-          <td>{{ p.grade_labels[h.grade] }}{% if h.price_date %} <span style="color:#6e7681;font-size:11px;">{{ h.price_date }}</span>{% endif %}</td>
-          <td>{% if h.is_risky_asset is none %}<span style="color:#d29922;">미상</span>{% elif h.is_risky_asset %}위험{% else %}안전{% endif %}</td>
-        </tr>
+        {% for t in p.types_in_use %}
+          {% for item in t.policy %}
+          <tr><td>{% if loop.first %}{{ t.label }}{% endif %}</td>
+            <td>{% if loop.first %}{% for g in t.gates %}<span class="chip dim">{{ g }}</span> {% else %}<span class="dim">제한 없음</span>{% endfor %}{% endif %}</td>
+            <td>{{ item.key }}<span class="meta"> {{ item.note }}</span></td>
+            <td class="num">{{ '{:,}'.format(item.value) }}{{ item.unit }}</td>
+            <td class="meta">{{ item.scope }} 기준 · {{ item.effective_from }}~</td></tr>
+          {% else %}
+          <tr><td>{{ t.label }}</td>
+            <td>{% for g in t.gates %}<span class="chip dim">{{ g }}</span> {% else %}<span class="dim">제한 없음</span>{% endfor %}</td>
+            <td colspan="3" class="dim">해당 제도 없음</td></tr>
+          {% endfor %}
         {% endfor %}
         </tbody>
-      </table></div>
+      </table>
+      <div class="legend"><b>범위</b>가 <code>user</code>인 한도는 1인당입니다 —
+        계좌당으로 읽으면 실제의 두 배를 표시하게 됩니다.</div>
+      {% set proposed = p.types_in_use|map(attribute='proposed')|map('list')|sum(start=[]) %}
+      {% if proposed %}
+      <div class="card-title" style="margin-top:14px;">정부안 — 미시행 · 현행 아님</div>
+      <table class="dense">
+        <thead><tr><th>정부안 항목</th><th class="num">안(案) 금액</th><th>상태</th></tr></thead>
+        <tbody>
+        {% for item in proposed %}
+        <tr><td class="dim">{{ item.key }}<span class="meta"> {{ item.note }}</span></td>
+          <td class="num dim">{{ '{:,}'.format(item.value) }}{{ item.unit }}</td>
+          <td><span class="chip dim">정부안, 미시행</span></td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      <div class="legend">국회를 통과하지 않았습니다. 어떤 계산에도 들어가지 않습니다.</div>
+      {% endif %}
     </details>
-    {% endif %}
-
-    {% if a.policy %}
-    <details class="more"><summary>제도</summary>
-      {% for item in a.policy %}
-      <p>
-        <b>{{ item.key }}</b>
-        {% if item.status == 'in_force' %}
-          — {{ '{:,}'.format(item.value) }}{{ item.unit }}
-          <span style="color:#6e7681;font-size:11px;">({{ item.scope }} 기준, {{ item.effective_from }}~)</span>
-        {% else %}
-          — <span style="color:#8b949e;">{{ '{:,}'.format(item.value) }}{{ item.unit }}</span>
-          <span style="background:#30363d;color:#8b949e;font-size:10px;padding:1px 5px;border-radius:3px;">정부안, 미시행</span>
-        {% endif %}
-        <br><span style="color:#8b949e;font-size:12px;">{{ item.note }}</span>
-      </p>
-      {% endfor %}
-    </details>
-    {% endif %}
   </div>
-  {% endfor %}
+  {% endif %}
   {% endif %}
 
   <div class="card">
     <div class="card-title">입력</div>
     <div class="card-sub">이 컴퓨터에서만 받습니다. 계좌번호는 저장하지 않습니다.</div>
-    <div id="msg" class="note" style="min-height:18px;"></div>
 
-    <details class="form" {% if p.empty %}open{% endif %}>
+    <details class="form" id="fAdd" {% if p.empty %}open{% endif %}>
       <summary>계좌 추가</summary>
       <div class="form-body">
         <div class="fields">
@@ -137,7 +253,7 @@
       </div>
     </details>
 
-    <details class="form">
+    <details class="form" id="fEdit">
       <summary>계좌 수정</summary>
       <div class="form-body">
         {% if p.empty %}
@@ -167,7 +283,7 @@
       </div>
     </details>
 
-    <details class="form">
+    <details class="form" id="fImport">
       <summary>보유 스냅샷 붙여넣기</summary>
       <div class="form-body">
         {% if p.empty %}
@@ -205,7 +321,7 @@
       </div>
     </details>
 
-    <details class="form">
+    <details class="form" id="fFlow">
       <summary>입출금</summary>
       <div class="form-body">
         {% if p.empty %}
@@ -230,11 +346,24 @@
           이전 입금은 일반 입금과 따로 셉니다 — ISA 만기자금의 연금계좌 전환은
           납입한도에 들어가지 않기 때문입니다.
         </div>
+        {% if p.recent_flows %}
+        <div class="scroll short" style="margin-top:10px;"><table class="dense">
+          <thead><tr><th>날짜</th><th>계좌</th><th>종류</th><th class="num">금액</th></tr></thead>
+          <tbody>
+          {% for f in p.recent_flows %}
+          <tr><td>{{ f.date }}</td><td>{{ f.label }}</td><td>{{ f.kind_label }}</td>
+            <td class="num">{{ '{:,.0f}'.format(f.amount) }} {{ f.currency }}</td></tr>
+          {% endfor %}
+          </tbody>
+        </table></div>
+        <div class="note warn">최근 {{ p.recent_flows|length }}건입니다. 같은 날짜에 같은
+          금액이 여러 줄이면 중복 입력입니다 — 기록 후 화면이 갱신되지 않던 때 생긴 것일 수 있습니다.</div>
+        {% endif %}
         {% endif %}
       </div>
     </details>
 
-    <details class="form">
+    <details class="form" id="fTag">
       <summary>노출 태그</summary>
       <div class="form-body">
         <div class="fields">
@@ -276,6 +405,81 @@
     } catch (err) { say('서버에 닿지 못했습니다: ' + err, true); return null; }
   }
   function val(id) { const el = document.getElementById(id); return el ? el.value.trim() : ''; }
+
+  // Read side. Filters change what is visible and never what a number means:
+  // nothing here sums, reorders or recomputes anything the server rendered.
+  let acct = '', flagOnly = false;
+  function apply() {
+    const q = (document.getElementById('q')?.value || '').trim().toLowerCase();
+    let shown = 0, total = 0;
+    document.querySelectorAll('#grid tr.h').forEach(row => {
+      total++;
+      const ok = (!acct || row.dataset.acct === acct)
+        && (!flagOnly || row.dataset.flag)
+        && (!q || (row.dataset.q || '').includes(q));
+      row.hidden = !ok;
+      if (ok) shown++;
+    });
+    document.querySelectorAll('#grid tr.grp').forEach(head => {
+      const key = head.dataset.g;
+      if (!key) { head.hidden = acct && head.dataset.acct !== acct; return; }
+      head.hidden = ![...document.querySelectorAll('#grid tr.h')]
+        .some(r => r.dataset.g === key && !r.hidden);
+    });
+    const stat = document.getElementById('stat');
+    if (stat) stat.textContent = '보이는 행 ' + shown + ' / 전체 ' + total;
+  }
+  function pick(id) {
+    acct = String(id);
+    document.querySelectorAll('.acctbar button').forEach(b => {
+      const on = (b.dataset.acct || '') === acct;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+    apply();
+  }
+  function toggleFlag() {
+    flagOnly = !flagOnly;
+    const b = document.getElementById('flagOnly');
+    b.setAttribute('aria-pressed', flagOnly ? 'true' : 'false');
+    b.classList.toggle('primary', flagOnly);
+    apply();
+  }
+  function openForm(id) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.open = true;
+    el.scrollIntoView({behavior: 'smooth', block: 'start'});
+  }
+  function snapPrefill(id) {
+    const sel = document.getElementById('hAccount');
+    if (sel) sel.value = id;
+    openForm('fImport');
+  }
+  function tagPrefill(source, dataset, symbol) {
+    ['tSource', 'tDataset', 'tSymbol'].forEach((f, i) => {
+      const el = document.getElementById(f);
+      if (el) el.value = [source, dataset, symbol][i];
+    });
+    openForm('fTag');
+    document.getElementById('tTag')?.focus();
+  }
+  document.addEventListener('keydown', e => {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) {
+      // Esc clears only the filter box. Clearing a focused control would
+      // destroy a hand-assembled CSV paste, which is data loss on the exact
+      // path this screen exists to make safer.
+      if (e.key === 'Escape' && e.target.id === 'q') { e.target.value = ''; apply(); }
+      return;
+    }
+    const tabs = [...document.querySelectorAll('.acctbar button')];
+    if (e.key === '0') pick('');
+    else if (/^[1-9]$/.test(e.key) && tabs[+e.key]) tabs[+e.key].click();
+    else if (e.key === '/') { e.preventDefault(); document.getElementById('q')?.focus(); }
+    else if (e.key === 'u') toggleFlag();
+    else if (e.key === 'i') openForm('fAdd');
+  });
   async function addAccount() {
     if (!val('acLabel') || !val('acInst')) { say('이름과 기관은 필요합니다.', true); return; }
     if (!val('acType')) { say('계좌 유형을 선택하세요 — 유형이 매수 가능 상품과 한도를 정합니다.', true); return; }
@@ -329,7 +533,7 @@
       account_id: val('fAccount'), date: val('fDate'),
       kind: val('fKind'), amount: val('fAmount'),
     });
-    if (d) say('기록됨');
+    if (d) { say('기록됨'); setTimeout(() => location.reload(), 700); }
   }
   async function addTag() {
     if (!val('tDataset') || !val('tSymbol')) { say('dataset 과 symbol 이 필요합니다.', true); return; }
@@ -337,11 +541,8 @@
       source: val('tSource'), dataset: val('tDataset'),
       symbol: val('tSymbol'), tag: val('tTag'),
     });
-    if (d) say('태그 저장됨');
+    if (d) { say('태그 저장됨'); setTimeout(() => location.reload(), 700); }
   }
   </script>
-
-  <div class="card" style="border-left:3px solid #6e7681;">
-    <div style="font-size:12px;color:#8b949e;line-height:1.8;">{{ p.warning }}</div>
-  </div>
+  <div id="msg" class="toast" onclick="this.textContent=''"></div>
 {% endblock %}

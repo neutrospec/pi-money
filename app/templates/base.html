@@ -94,6 +94,52 @@
   .note { font-size:11px; color:#6e7681; line-height:1.6; margin-top:10px; }
   .note.warn { color:#d29922; }
 
+  /* Balance board. Dense the way an HTS position window is dense: 23px rows,
+     right-aligned tabular numbers, minimal chrome. The one thing an HTS puts
+     on such a screen and this project cannot is 총평가금액 — so the grid
+     carries subtotals per (account, grade, currency) and nothing above that. */
+  table.dense th { padding:4px 6px; font-size:11px; }
+  table.dense td { padding:3px 6px; font-size:12px; line-height:16px; }
+  table.dense tr.grp td { background:#12181f; border-top:1px solid #21262d;
+                          font-size:12px; padding:6px; }
+  table.dense tr.grp.empty td { color:#6e7681; font-style:normal; }
+  table.dense tr.h[data-flag="warn"] td:first-child { box-shadow:inset 2px 0 0 #d29922; }
+  table.dense tr.h[data-flag="bad"] td:first-child { box-shadow:inset 2px 0 0 #f85149; }
+  table.dense tr.h:hover td { background:#161b22; }
+  .mono { font-family:ui-monospace,monospace; }
+  .dim { color:#6e7681; }
+  .meta { color:#6e7681; font-size:11px; }
+  .age { color:#d29922; font-style:normal; font-size:11px; }
+  /* Accounts as a strip rather than five stacked cards, so five are
+     comparable at a glance and the type sits beside the name at equal
+     weight — which is how a label/type mismatch becomes visible at all. */
+  .acctbar { display:flex; gap:6px; overflow-x:auto; margin-bottom:16px;
+             padding-bottom:4px; }
+  .acctbar button { flex:0 0 auto; text-align:left; padding:6px 12px;
+                    line-height:1.35; width:auto; }
+  .acctbar button.on { background:#1f6feb; border-color:#1f6feb; }
+  .acctbar button .meta { color:inherit; opacity:.72; display:block; }
+  .toolbar { display:flex; gap:8px; align-items:center; flex-wrap:wrap;
+             margin-bottom:10px; }
+  .toolbar input { width:220px; }
+  .chip { display:inline-block; font-size:10px; padding:1px 6px; border-radius:9px;
+          border:1px solid #30363d; color:#8b949e; white-space:nowrap; }
+  .chip.warn { border-color:#9e6a03; color:#d29922; }
+  .chip.bad { border-color:#8b2c26; color:#f85149; }
+  .chip.dim { border-color:#21262d; color:#6e7681; }
+  button.mini { padding:2px 8px; font-size:11px; }
+  .scroll.tall { max-height:70vh; }
+  .scroll.short { max-height:180px; }
+  .legend { font-size:11px; color:#6e7681; line-height:1.7; margin-top:10px; }
+  /* The preview line naming how many rows a full replace is about to delete
+     rendered above a nine-row textarea, i.e. off-screen on the one path where
+     it matters. It is fixed to the viewport now. */
+  .toast { position:fixed; bottom:18px; left:50%; transform:translateX(-50%);
+           background:#161b22; border:1px solid #30363d; border-radius:8px;
+           padding:10px 16px; font-size:13px; z-index:200; max-width:80vw;
+           cursor:pointer; }
+  .toast:empty { display:none; }
+
   /* A disclosure whose summary is a sentence, not a glyph. details.learn's
      summary is an 18px circle holding a single "?", so putting words in one
      stacks them a character per line — which is exactly what shipped on the

@@ -199,6 +199,74 @@ class FormStyleTests(unittest.TestCase):
         self.assertRegex(styles, r"\.field\s*{[^}]*flex-direction:\s*column")
 
 
+class TableShapeTests(unittest.TestCase):
+    """A table whose body rows do not match its header collapses silently.
+
+    Nothing about a mismatched colspan produces an error: the page returns
+    200, no tag is left unrendered, and the browser draws a broken grid. Only
+    counting the cells catches it.
+    """
+
+    def render(self):
+        import os
+        from unittest.mock import patch
+
+        with patch.dict(os.environ, {"MONEY_DISABLE_SCHEDULER": "1"}):
+            with _client() as client:
+                return client.get("/portfolio").text
+
+    def tables(self, markup):
+        import re
+
+        for table in re.findall(r"<table[^>]*>(.*?)</table>", markup, re.S):
+            if "<thead" not in table:
+                continue
+            head, _, body = table.partition("</thead>")
+            # <thead> itself matches a naive "<th" search; require the
+            # closing tag so the header count is the real one.
+            columns = len(re.findall(r"<th[ >]", head))
+            widths = set()
+            for row in re.findall(r"<tr[^>]*>(.*?)</tr>", body, re.S):
+                # A row mixes plain cells with spanning ones, so the width is
+                # the sum: taking the first colspan as the whole row is how a
+                # genuinely correct table reads as broken.
+                cells = 0
+                for cell in re.findall(r"<td([^>]*)>", row):
+                    span = re.search(r'colspan="(\d+)"', cell)
+                    cells += int(span.group(1)) if span else 1
+                if cells:
+                    widths.add(cells)
+            yield columns, widths
+
+    def test_every_body_row_matches_its_header_width(self):
+        for columns, widths in self.tables(self.render()):
+            self.assertTrue(columns, "a table rendered with no header cells")
+            self.assertLessEqual(
+                widths, {columns},
+                f"header has {columns} columns, body rows have {sorted(widths)}",
+            )
+
+    def test_the_balance_board_renders_its_sections(self):
+        markup = self.render()
+        for section in ("계좌 평가", "잔고", "제도 · 매수 불가", "입력"):
+            self.assertIn(section, markup, section)
+        # The holdings grid must not be behind a disclosure: seeing the rows
+        # used to cost one click per account.
+        grid = markup.split('id="grid"')[1]
+        self.assertNotIn("<details", markup.split('id="grid"')[0].rsplit("<div class=\"card\"", 1)[1])
+
+    def test_no_total_row_or_column_exists(self):
+        import re
+
+        markup = self.render()
+        self.assertNotIn("<tfoot", markup)
+        # A "합계"/"총" header would be a column of sums across grades.
+        for header in re.findall(r"<th[^>]*>(.*?)</th>", markup, re.S):
+            text = re.sub(r"<[^>]+>", "", header)
+            for banned in ("합계", "총평가", "총자산", "순자산"):
+                self.assertNotIn(banned, text, header)
+
+
 class ApiReachabilityTests(unittest.TestCase):
     """Every endpoint should be reachable from the UI or explicitly exempt."""
 

@@ -48,6 +48,17 @@ GRADE_LABELS = {
     USER_STATED: "사용자 입력", UNPRICED: "평가 불가",
 }
 
+# Trustworthiness, descending. Used only for display order, so the holes land
+# at the end of an account rather than in the middle of it. ``valuation()``
+# keeps its own alphabetical order because tests pin it.
+GRADE_ORDER = (MARKET, STALE, USER_STATED, UNPRICED)
+
+VALUATION_NOTE = (
+    "등급과 통화별로만 냅니다. 시장가·지연가·사용자 입력·평가 불가를 더하면 "
+    "뜻이 없는 숫자가 되고, 통화를 넘어 더하려면 관측일이 서로 다른 환율이 "
+    "필요합니다."
+)
+
 # A close older than this is graded stale rather than market. Same allowance
 # the indicator layer uses for a daily series, so the project has one notion of
 # "recent enough" rather than two that can drift apart.
@@ -257,7 +268,7 @@ def _price(source: str, dataset: str, symbol: str) -> dict | None:
         return None
     with db.get_conn() as conn:
         row = conn.execute(
-            """SELECT date, close FROM market_daily
+            """SELECT date, close, change, change_pct FROM market_daily
                WHERE source=? AND dataset=? AND symbol=? AND close IS NOT NULL
                ORDER BY date DESC LIMIT 1""",
             (source, dataset, symbol),
@@ -270,19 +281,27 @@ def _grade(holding: dict, today: date) -> dict:
     price = _price(holding["source"], holding["dataset"], holding["symbol"])
     if price and holding.get("quantity") is not None:
         age = (today - date.fromisoformat(price["date"])).days
+        grade = MARKET if age <= PRICE_MAX_AGE_DAYS else STALE
         return {
-            "grade": MARKET if age <= PRICE_MAX_AGE_DAYS else STALE,
+            "grade": grade,
             "amount": round(price["close"] * holding["quantity"], 2),
             "price": price["close"], "price_date": price["date"],
             "price_age_days": age,
+            "change": price["change"], "change_pct": price["change_pct"],
+            # A stale close's move is painted flat. A two-hundred-day-old
+            # +2.1% rendered red reads as "it went up today".
+            "move_class": (
+                "flat" if grade != MARKET or not price["change_pct"]
+                else "up" if price["change_pct"] > 0 else "down"
+            ),
         }
+    blank = {"price": None, "price_date": None, "price_age_days": None,
+             "change": None, "change_pct": None, "move_class": "flat"}
     if holding.get("stated_value") is not None:
-        return {"grade": USER_STATED, "amount": holding["stated_value"],
-                "price": None, "price_date": None, "price_age_days": None}
+        return {"grade": USER_STATED, "amount": holding["stated_value"], **blank}
     # Not zero. A holding nobody can price is a hole in the picture and has to
     # look like one.
-    return {"grade": UNPRICED, "amount": None,
-            "price": None, "price_date": None, "price_age_days": None}
+    return {"grade": UNPRICED, "amount": None, **blank}
 
 
 def holdings(account_id: int, as_of: str | None = None,
@@ -381,6 +400,122 @@ def gate_conflicts(account: dict, items: list[dict]) -> list[dict]:
     ]
 
 
+def _days_since(day: str | None, when: date) -> int | None:
+    try:
+        return (when - date.fromisoformat(day)).days if day else None
+    except ValueError:
+        return None
+
+
+def _lints(account: dict) -> list[str]:
+    """Data-entry contradictions the screen can see but never showed.
+
+    The account type is not decoration — it decides which instruments the
+    account may hold and which ceilings apply — so an account named 연금저축
+    and stored as a general one is a real defect, not a cosmetic one. The web
+    form used to let the type default silently, which is exactly how that
+    happens.
+    """
+    found = []
+    label = account["label"].upper()
+    # Ordered most specific first, because the general tokens are substrings
+    # of the specific ones: "퇴직연금DC" contains "연금", and checking that
+    # first accuses a correctly typed DC account of being a pension savings
+    # account. Each token names every type it is consistent with.
+    guesses = (
+        ("퇴직", ("retirement_dc",)),
+        ("DC", ("retirement_dc",)),
+        ("IRP", ("retirement_dc",)),
+        ("ISA", ("isa",)),
+        ("연금", ("pension_savings", "retirement_dc")),
+    )
+    for token, allowed in guesses:
+        if token in label:
+            if account["account_type"] not in allowed:
+                found.append(
+                    f"이름은 '{account['label']}'인데 유형이 "
+                    f"{accounts.label_for(account['account_type'])}입니다 — "
+                    f"유형이 매수 가능 상품과 납입 한도를 정합니다"
+                )
+            break
+    for field, name in (("opened_on", "개설일"), ("tax_opened_on", "세법상 가입일")):
+        value = account.get(field)
+        if value:
+            try:
+                date.fromisoformat(value)
+            except ValueError:
+                found.append(f"{name} '{value}' 을 날짜로 읽을 수 없습니다")
+    return found
+
+
+def _instrument_roll(built: list[dict]) -> list[dict]:
+    """One row per distinct instrument, across every account.
+
+    An account-first layout renders the same ETF once per account and can
+    never say that it sits in all five. This table can, and it is also the
+    tagging surface — ``instrument_exposure`` is keyed without an account, so
+    asking per account would ask the same question five times for one answer.
+
+    It carries no money column, and that is structural rather than a
+    preference: a cross-account instrument value is exactly the figure the
+    liquidity argument forbids, and with no column there is nowhere to put it.
+    """
+    with db.get_conn() as conn:
+        tagged: dict[tuple, list[str]] = {}
+        for row in conn.execute("SELECT source, dataset, symbol, tag "
+                                "FROM instrument_exposure"):
+            tagged.setdefault(
+                (row["source"], row["dataset"], row["symbol"]), []
+            ).append(accounts.EXPOSURE_TAGS.get(row["tag"], row["tag"]))
+    rolled: dict[tuple, dict] = {}
+    for account in built:
+        for item in account["holdings"]:
+            key = (item["source"], item["dataset"], item["symbol"])
+            # A deposit keyed by name is not an instrument and cannot be
+            # tagged: the tag endpoint needs a dataset and a symbol.
+            if not item["source"] or not item["symbol"]:
+                continue
+            cell = rolled.setdefault(key, {
+                "source": key[0], "dataset": key[1], "symbol": key[2],
+                "name": item["name"], "accounts": [], "quantities": [],
+                "price": item.get("price"), "change_pct": item.get("change_pct"),
+                "move_class": item.get("move_class", "flat"),
+                "price_date": item.get("price_date"),
+                "tags": tagged.get(key, []),
+            })
+            cell["accounts"].append(account["label"])
+            cell["quantities"].append(item["quantity"])
+    out = []
+    for cell in rolled.values():
+        amounts = cell.pop("quantities")
+        out.append({
+            **cell,
+            "account_count": len(cell["accounts"]),
+            # Summing shares of one instrument is legitimate — one unit, one
+            # thing — and is not a valuation. A partial sum would be a lie, so
+            # it is only reported when every member has a quantity.
+            "quantity_total": (
+                sum(amounts) if amounts and all(v is not None for v in amounts)
+                else None
+            ),
+        })
+    out.sort(key=lambda cell: (-cell["account_count"], cell["symbol"]))
+    return out
+
+
+def recent_flows(limit: int = 10) -> list[dict]:
+    """A readback for the entry form, because a silent write invites a repeat."""
+    with db.get_conn() as conn:
+        rows = conn.execute(
+            """SELECT f.date, f.kind, f.amount, f.currency, a.label
+               FROM account_cashflows f JOIN accounts a ON a.id = f.account_id
+               ORDER BY f.date DESC, f.id DESC LIMIT ?""", (limit,),
+        ).fetchall()
+    return [{**dict(row),
+             "kind_label": accounts.CASHFLOW_KINDS.get(row["kind"], row["kind"])}
+            for row in rows]
+
+
 def overview(today: date | None = None) -> dict:
     """Every account with its holdings, valuation grades and constraints."""
     when = today or kst_today()
@@ -388,23 +523,97 @@ def overview(today: date | None = None) -> dict:
     for account in account_list():
         as_of = latest_as_of(account["id"])
         items = holdings(account["id"], as_of, when)
+        conflicts = gate_conflicts(account, items)
+        flagged = {item["symbol"] for item in conflicts}
+        for item in items:
+            item["weight_pct"] = _weight(items, item)
+            item["conflict"] = item["symbol"] in flagged
+            item["dataset_short"] = (item["dataset"] or "").replace("_bydd_trd", "")
+            item["flag"] = (
+                "bad" if item["conflict"]
+                else "warn" if (item["grade"] in (STALE, UNPRICED)
+                                or item["is_risky_asset"] is None)
+                else None
+            )
+        report = valuation(items)
+        buckets = {f"{cell['grade']}|{cell['currency']}": cell
+                   for cell in report["buckets"]}
+        groups = []
+        for currency in sorted({item["currency"] for item in items}):
+            for grade in GRADE_ORDER:
+                rows = [item for item in items
+                        if item["currency"] == currency and item["grade"] == grade]
+                if not rows:
+                    continue
+                cell = buckets.get(f"{grade}|{currency}", {})
+                rows.sort(key=lambda item: (item["amount"] is None,
+                                            -(item["amount"] or 0), item["name"]))
+                groups.append({
+                    "grade": grade, "currency": currency,
+                    "label": GRADE_LABELS[grade],
+                    # Copied from valuation() rather than re-summed, so the
+                    # screen and the payload cannot disagree about a subtotal.
+                    "subtotal": cell.get("amount"), "count": cell.get("holdings"),
+                    "rows": rows,
+                })
+        lints = _lints(account)
         built.append({
             **account,
             "as_of": as_of,
-            "stale_days": (
-                (when - date.fromisoformat(as_of)).days if as_of else None
-            ),
+            "stale_days": _days_since(as_of, when),
             "holdings": items,
-            "valuation": valuation(items),
+            "groups": groups,
+            "cells": buckets,
+            "valuation": report,
             "risky": risky_share(account, items),
-            "conflicts": gate_conflicts(account, items),
+            "conflicts": conflicts,
+            "unknown": sum(1 for item in items if item["is_risky_asset"] is None),
+            "lints": lints,
+            "check": len(lints) + len(conflicts)
+                     + sum(1 for item in items if item["is_risky_asset"] is None),
             "policy": accounts.policy_for(account["account_type"]),
         })
+    every = [item for account in built for item in account["holdings"]]
+    dates = [item["price_date"] for item in every if item.get("price_date")]
+    columns, seen = [], set()
+    for account in built:
+        for cell in account["valuation"]["buckets"]:
+            key = f"{cell['grade']}|{cell['currency']}"
+            if key not in seen:
+                seen.add(key)
+                columns.append({"key": key, "grade": cell["grade"],
+                                "currency": cell["currency"],
+                                "label": GRADE_LABELS[cell["grade"]]})
+    columns.sort(key=lambda cell: (cell["currency"],
+                                   GRADE_ORDER.index(cell["grade"])))
+    types = []
+    for account in built:
+        if account["account_type"] not in [item["type"] for item in types]:
+            types.append({
+                "type": account["account_type"],
+                "label": account["type_label"],
+                "gates": account["gates"],
+                "policy": [item for item in account["policy"]
+                           if item["status"] == accounts.IN_FORCE],
+                "proposed": [item for item in account["policy"]
+                             if item["status"] != accounts.IN_FORCE],
+            })
     return {
         "as_of": when.isoformat(),
         "accounts": built,
         "empty": not built,
         "grade_labels": GRADE_LABELS,
+        "holding_count": len(every),
+        # Said out loud because they are different dates and the screen never
+        # admitted it: the snapshot is as of one day, the prices another.
+        "price_as_of": max(dates) if dates else None,
+        "bucket_cols": columns,
+        "instruments": _instrument_roll(built),
+        "recent_flows": recent_flows(),
+        "types_in_use": types,
+        "valuation_note": VALUATION_NOTE,
+        "unknown_count": sum(account["unknown"] for account in built),
+        "conflict_count": sum(len(account["conflicts"]) for account in built),
         "warning": (
             "총자산 단일 숫자를 만들지 않습니다. 평가 등급과 통화별로만 "
             "보여주며, 환산하지 않습니다. 매수·매도를 말하지 않습니다."
