@@ -13,7 +13,7 @@ from mcp.server import MCPServer
 
 from app import (
     analysis, backtest, brief as brief_module, correlation, coverage,
-    dashboard, db,
+    dashboard, db, portfolio,
     explain, history_recovery, layers, market_metrics, normalize, pit,
     sentiment as sentiment_gauge, spillover as spillover_analysis,
 )
@@ -154,6 +154,40 @@ def market_layers() -> dict:
     that is a finding rather than something to average.
     """
     return layers.cards()
+
+
+@mcp.tool()
+def market_portfolio() -> dict:
+    """Report the owner's accounts and holdings, to be read beside the indicators.
+
+    Use this when the question involves what the owner actually holds — which
+    exposures a market reading touches, whether an account's constraints are
+    satisfied, what is unvaluable. Not for deciding trades: the boundary text
+    rides along on every response and it holds here as everywhere else.
+
+    Four things about the shape, each of which is a refusal rather than an
+    omission:
+
+    * **There is no net worth.** Valuation comes back per (grade, currency) and
+      the four grades — market, stale, user_stated, unpriced — must not be
+      summed. Adding a live price to a stale one to a number the owner typed to
+      a blank produces a figure that means nothing and reads as wealth.
+    * **Currencies are never combined.** Converting them needs an FX rate whose
+      observation date differs from both sides.
+    * **``weight_pct`` is a share of that account's market-valued money only**,
+      not of everything. Quote it with its account.
+    * **``is_risky_asset: null`` means unknown, not safe.** Where a DC account
+      holds one, ``risky.decidable`` is false and there is no share to quote.
+
+    ``detail`` says whether amounts are present. They are by default, on the
+    premise that the model reading this runs locally;
+    ``MONEY_PORTFOLIO_AGENT_DETAIL=0`` removes them. Note that MCP attaches to
+    whatever client launches it, so that premise is the operator's to keep.
+
+    There is no write tool and there will not be one — entry goes through the
+    browser, behind a local-only gate.
+    """
+    return portfolio.for_agent()
 
 
 @mcp.tool()

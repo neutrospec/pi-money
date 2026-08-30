@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import os
 from datetime import date, timedelta
 
 from app import accounts, db
@@ -77,6 +78,105 @@ SPOT_DATASETS = (
 # ---------------------------------------------------------------------------
 # Reads
 # ---------------------------------------------------------------------------
+def agent_detail() -> bool:
+    """Whether an agent response may carry amounts.
+
+    Default on, because the owner runs a local model. Off is the deliberate
+    reversal, and what it really declares is that the model on this machine has
+    stopped being local — a fact about the runtime that no amount of code here
+    can verify.
+    """
+    return os.environ.get(
+        "MONEY_PORTFOLIO_AGENT_DETAIL", "1"
+    ).strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _weight(items: list[dict], item: dict) -> float | None:
+    """This holding's share of its account's *market-valued* money.
+
+    The denominator is deliberately narrow: only holdings priced from a market
+    close. Widening it to every grade would add a live price to a number the
+    owner typed to a blank, which is the single total this project refuses to
+    produce, wearing a percentage sign.
+    """
+    priced = [
+        other["amount"] for other in items
+        if other["grade"] in (MARKET, STALE) and other["amount"] is not None
+        and other["currency"] == item["currency"]
+    ]
+    total = sum(priced)
+    if item["amount"] is None or item["grade"] not in (MARKET, STALE) or not total:
+        return None
+    return round(item["amount"] / total * 100, 1)
+
+
+def for_agent(today: date | None = None) -> dict:
+    """The portfolio as an agent reads it.
+
+    Weights, counts, names and constraints always. Amounts and quantities only
+    when ``agent_detail()`` says the runtime is local. The boundary text rides
+    along on every response, because the reason to hand an agent a portfolio is
+    to read it beside the indicators — not to be told what to trade.
+    """
+    from app import brief
+
+    detail = agent_detail()
+    picture = overview(today)
+    accounts_out = []
+    for account in picture["accounts"]:
+        items = account["holdings"]
+        accounts_out.append({
+            "id": account["id"], "label": account["label"],
+            "institution": account["institution"],
+            "account_type": account["account_type"],
+            "type_label": account["type_label"],
+            "cannot_hold": account["gates"],
+            "as_of": account["as_of"], "stale_days": account["stale_days"],
+            "holdings": [
+                {
+                    "name": item["name"], "symbol": item["symbol"],
+                    "currency": item["currency"],
+                    "grade": item["grade"],
+                    "weight_pct": _weight(items, item),
+                    "price_date": item.get("price_date"),
+                    "is_risky_asset": item["is_risky_asset"],
+                    **({"quantity": item["quantity"], "amount": item["amount"],
+                        "price": item.get("price")} if detail else {}),
+                }
+                for item in items
+            ],
+            "valuation": (
+                account["valuation"] if detail else {
+                    "buckets": [
+                        {key: bucket[key] for key in ("grade", "currency", "holdings")}
+                        for bucket in account["valuation"]["buckets"]
+                    ],
+                    "unpriced": account["valuation"]["unpriced"],
+                    "note": account["valuation"]["note"],
+                }
+            ),
+            "risky": account["risky"],
+            "conflicts": account["conflicts"],
+            "policy": account["policy"],
+        })
+    return {
+        "as_of": picture["as_of"],
+        "accounts": accounts_out,
+        "empty": picture["empty"],
+        "detail": detail,
+        "detail_note": (
+            "금액과 수량이 포함돼 있습니다. 이 기기의 모델이 로컬이라는 전제이며 "
+            "MONEY_PORTFOLIO_AGENT_DETAIL=0 으로 끕니다."
+            if detail else
+            "금액과 수량은 빠져 있습니다 (MONEY_PORTFOLIO_AGENT_DETAIL=0). "
+            "비중·건수·종목명·제도 제약만 있습니다."
+        ),
+        "warning": picture["warning"],
+        # The same boundary every other verdict surface carries.
+        "boundary": brief.BOUNDARY,
+    }
+
+
 def account_list() -> list[dict]:
     with db.get_conn() as conn:
         rows = conn.execute("SELECT * FROM accounts ORDER BY id").fetchall()

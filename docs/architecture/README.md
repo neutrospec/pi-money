@@ -95,8 +95,8 @@ flowchart TD
 ### 소비자
 
 - `app/main.py`: 읽기 전용 웹과 REST API. 알 수 없는 심볼은 allowlist에서 거부합니다.
-- `app/mcp_server.py`: MCP 2.0 stdio 도구 26개. FastAPI 없이 DB를 직접 읽습니다.
-- `.pi/extensions/market.ts`: 같은 26개 기능을 로컬 REST로 제공하는 프로젝트 전용 pi 도구입니다.
+- `app/mcp_server.py`: MCP 2.0 stdio 도구 27개. FastAPI 없이 DB를 직접 읽습니다.
+- `.pi/extensions/market.ts`: 같은 27개 기능을 로컬 REST로 제공하는 프로젝트 전용 pi 도구입니다.
 - `.agents/skills/money-market-intelligence/`: 도구 선택, 최신성 확인, 금융 해석 한계를 규정하는 프로젝트 스킬입니다.
 
 ### 판정 층

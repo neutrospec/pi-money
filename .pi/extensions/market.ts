@@ -664,6 +664,60 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
+	// 계좌·보유 자산
+	pi.registerTool({
+		name: "market_portfolio",
+		label: "자산",
+		description:
+			"사용자의 계좌와 보유 종목을 지표 옆에서 읽는다. 매매 결정용이 아니며 " +
+			"경계 문구가 모든 응답에 실린다. 형태에 네 가지 거절이 들어 있다: " +
+			"총자산 숫자가 없고(평가는 등급×통화별이며 market·stale·user_stated· " +
+			"unpriced 를 더하면 안 된다), 통화를 환산하지 않고, weight_pct 는 그 계좌의 " +
+			"시장가 평가액에 대한 비중이므로 반드시 계좌와 함께 인용하고, " +
+			"is_risky_asset 이 null 이면 미상이지 안전이 아니다 — DC 계좌에 하나라도 " +
+			"있으면 risky.decidable 이 false 이고 인용할 비율이 없다. " +
+			"detail 이 금액 포함 여부를 알려준다. 쓰기 도구는 없다.",
+		parameters: Type.Object({}),
+		async execute() {
+			const data = await apiGet("/api/portfolio");
+			if (data.empty) {
+				return {
+					content: [{ type: "text", text: "등록된 계좌가 없습니다." }],
+					details: data,
+				};
+			}
+			const lines = data.accounts.flatMap((a: any) => [
+				`${a.label} (${a.institution} · ${a.type_label})` +
+					` 기준 ${a.as_of ?? "스냅샷 없음"}` +
+					(a.cannot_hold?.length ? ` · 매수 불가: ${a.cannot_hold.join(", ")}` : ""),
+				...a.valuation.buckets.map(
+					(b: any) =>
+						`   ${b.grade} ${b.currency}` +
+						(b.amount !== undefined ? ` ${b.amount.toLocaleString()}` : "") +
+						` (${b.holdings}건)`,
+				),
+				...a.holdings.map(
+					(h: any) =>
+						`   ${h.name} ${h.weight_pct !== null ? h.weight_pct + "%" : "비중 산출 불가"}` +
+						` · ${h.grade}` +
+						(h.is_risky_asset === null ? " · 위험자산 미상" : ""),
+				),
+				...(a.risky?.applicable
+					? [
+							`   위험자산: ${a.risky.decidable
+								? `${a.risky.share_pct}% / 한도 ${a.risky.limit_pct}%`
+								: a.risky.reason}`,
+						]
+					: []),
+				...(a.conflicts ?? []).map((c: any) => `   ⚠ ${c.detail}`),
+			]);
+			return {
+				content: [{ type: "text", text: [...lines, data.detail_note, data.boundary].join("\n") }],
+				details: data,
+			};
+		},
+	});
+
 	// 신호 검증
 	pi.registerTool({
 		name: "market_backtest",

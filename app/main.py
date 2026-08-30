@@ -175,6 +175,12 @@ def portfolio_page(request: Request):
     )
 
 
+@app.get("/api/portfolio")
+def api_portfolio():
+    """The portfolio as an agent reads it. Read-only; writes need the gate."""
+    return portfolio.for_agent()
+
+
 @app.post("/api/portfolio/account", dependencies=[Depends(webwrite.require_local_write)])
 def api_add_account(body: dict = Body(...)):
     try:

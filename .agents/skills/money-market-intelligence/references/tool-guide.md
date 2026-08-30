@@ -1,6 +1,6 @@
 # Tool guide
 
-MCP and pi expose the same 26 canonical capabilities. MCP reads SQLite
+MCP and pi expose the same 27 canonical capabilities. MCP reads SQLite
 directly; pi calls the matching cache-only REST endpoint.
 
 | Tool | Use it for | Important inputs |
@@ -28,6 +28,7 @@ directly; pi calls the matching cache-only REST endpoint.
 | `market_derived_metrics` | Aligned macro transformations and 20/60-day cross-asset relative strength | none |
 | `market_breadth` | KOSPI/KOSDAQ advance-decline, turnover, concentration, and bounded 20-day breadth | none |
 | `market_layers` | The five evidence layers — policy, growth, liquidity, credit, breadth — with per-layer confidence. Use it for "what part of the economy is saying what" rather than "what contradicts what" | none |
+| `market_portfolio` | The owner's accounts and holdings, to be read beside the indicators. No net worth, no FX conversion, no return figures — see below | none |
 | `market_backtest` | What a regime verdict actually meant over 655 replayed trading days. Read it before quoting a verdict as though it predicted anything | optional `market`: `korea` (default) or `us` |
 | `market_replay` | The verdicts this repository could have produced on a past date. Use it to check whether a reading would have held at the time; never to claim it did | `date` (YYYY-MM-DD, KST); `mode`: `observed` (default) or `vintage` |
 | `market_replay_readiness` | From which date each brief input can be replayed. Read this before quoting a vintage replay | none |
@@ -88,6 +89,42 @@ than by what contradicts what. Two things about it are easy to misread:
 evidence reported and how much arrived past its own update cycle, counted
 separately because the causes differ — one is a collector problem, the other
 is a publication schedule nobody controls.
+
+## Reading the portfolio
+
+`market_portfolio` returns what the owner holds. Its shape encodes four
+refusals, and quoting it means honouring them:
+
+- **There is no net worth and you must not compute one.** Valuation comes back
+  per `(grade, currency)`. The four grades — `market`, `stale`, `user_stated`,
+  `unpriced` — must never be summed: adding a live price to a stale one to a
+  figure the owner typed to a blank produces a number that means nothing and
+  reads as wealth. Currencies are never combined either; converting them needs
+  an FX rate whose observation date differs from both sides.
+- **`weight_pct` is a share of that account's market-valued money**, not of
+  everything the owner has. Always quote it with its account.
+- **`is_risky_asset: null` is unknown, not safe.** Where a DC account holds
+  one, `risky.decidable` is false and there is no share to quote — report
+  `risky.reason` instead. Never count unknowns as safe, never drop them from a
+  denominator.
+- **`risky.share_pct` and `risky.limit_pct` are the end of the display.** Do
+  not compute the difference between them; headroom is room to act, which is
+  advice. Same for `conflicts`: a holding an account legally cannot contain is
+  reported as a data-entry question, not as a trade.
+
+No return figure exists anywhere in the payload and none may be derived —
+`book_amount` is what the broker reported as an acquisition amount by an
+unknown method, not a cost basis. Domestic price history runs about 23
+sessions and foreign holdings have none, so past portfolio value cannot be
+reconstructed at all.
+
+`detail` says whether amounts and quantities are present. They are by default,
+on the premise that the model reading this runs locally. MCP attaches to
+whatever client launches it, so that premise belongs to whoever configured the
+client; `MONEY_PORTFOLIO_AGENT_DETAIL=0` removes amounts if it stops holding.
+
+There is no write tool. Entry goes through the browser behind a local-only
+gate, and that will not change.
 
 ## Reading the backtest
 

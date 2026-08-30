@@ -2065,7 +2065,7 @@ class McpTests(TemporaryDatabaseTest):
             "market_derived_metrics", "market_breadth",
             "market_datasets", "market_daily",
             "market_layers", "market_replay", "market_replay_readiness",
-            "market_backtest",
+            "market_backtest", "market_portfolio",
         }, names)
         self.assertEqual("ok", mcp_server.market_health()["database_integrity"])
         self.assertIn("reconciliation", mcp_server.market_health())

@@ -35,6 +35,8 @@ UI_EXEMPT = {
                    "endpoint exists because agents read the layer cards too",
     "/api/backtest": "the /backtest page renders this payload server-side; the "
                      "endpoint exists because agents read the verification too",
+    "/api/portfolio": "the /portfolio page renders its own payload server-side; "
+                      "this endpoint is the agent-facing read that pi calls",
     "/api/portfolio/account": "write endpoint, called by the form JS on "
                               "/portfolio and gated to local requests",
     "/api/portfolio/account/update": "write endpoint, called by the form JS "

@@ -343,6 +343,104 @@ class ImportTests(TemporaryDatabaseTest):
             portfolio.holdings(account, today=date(2026, 8, 30))[0]["is_risky_asset"])
 
 
+class AgentSurfaceTests(TemporaryDatabaseTest):
+    """Reads are open to agents; writes are not, and the shape is the contract."""
+
+    def stocked(self):
+        self.priced("etf_bydd_trd", "AAA", "2026-08-28", 100.0)
+        self.priced("etf_bydd_trd", "BBB", "2026-08-28", 300.0)
+        account = portfolio.add_account("테스트", "테스트 증권", "retirement_dc")
+        portfolio.import_rows(account, "2026-08-30",
+            "source,dataset,symbol,name,quantity,stated_value,is_risky_asset\n"
+            "krx,etf_bydd_trd,AAA,합성 A,1,,1\n"
+            "krx,etf_bydd_trd,BBB,합성 B,1,,\n"
+            ",,예금,합성 예금,,5000,0")
+        return account
+
+    def test_amounts_are_present_by_default(self):
+        # The premise changed on 2026-08-30: the model reading this runs
+        # locally, so the reason for hiding amounts no longer applies.
+        self.stocked()
+        holding = portfolio.for_agent(date(2026, 8, 30))["accounts"][0]["holdings"][0]
+        self.assertIn("amount", holding)
+        self.assertIn("quantity", holding)
+
+    def test_setting_the_switch_off_removes_amounts_and_quantities(self):
+        from unittest.mock import patch
+        import os
+
+        self.stocked()
+        with patch.dict(os.environ, {"MONEY_PORTFOLIO_AGENT_DETAIL": "0"}):
+            payload = portfolio.for_agent(date(2026, 8, 30))
+        self.assertFalse(payload["detail"])
+        for holding in payload["accounts"][0]["holdings"]:
+            self.assertNotIn("amount", holding)
+            self.assertNotIn("quantity", holding)
+            self.assertNotIn("price", holding)
+            # Weights and names survive: they are what makes the payload
+            # useful beside the indicators without carrying balances.
+            self.assertIn("weight_pct", holding)
+            self.assertIn("name", holding)
+        for bucket in payload["accounts"][0]["valuation"]["buckets"]:
+            self.assertNotIn("amount", bucket)
+            self.assertIn("holdings", bucket)
+
+    def test_the_payload_carries_no_total_under_either_setting(self):
+        from unittest.mock import patch
+        import os
+
+        self.stocked()
+        banned = {"total", "total_value", "net_worth", "sum", "grand_total"}
+        for setting in ("1", "0"):
+            with patch.dict(os.environ, {"MONEY_PORTFOLIO_AGENT_DETAIL": setting}):
+                payload = portfolio.for_agent(date(2026, 8, 30))
+            self.assertEqual(set(), banned & set(payload), setting)
+            for account in payload["accounts"]:
+                self.assertEqual(set(), banned & set(account), setting)
+                self.assertEqual(set(), banned & set(account["valuation"]), setting)
+
+    def test_weights_are_a_share_of_that_accounts_market_valued_money(self):
+        # Widening the denominator to every grade would add a live price to a
+        # number the owner typed to a blank — the refused total, as a percent.
+        self.stocked()
+        holdings = portfolio.for_agent(date(2026, 8, 30))["accounts"][0]["holdings"]
+        weights = {item["name"]: item["weight_pct"] for item in holdings}
+        self.assertEqual(25.0, weights["합성 A"])
+        self.assertEqual(75.0, weights["합성 B"])
+        # The stated-value deposit has no weight: it is not market-valued.
+        self.assertIsNone(weights["합성 예금"])
+
+    def test_an_unknown_risk_flag_survives_to_the_agent_as_null(self):
+        self.stocked()
+        payload = portfolio.for_agent(date(2026, 8, 30))
+        flags = {item["name"]: item["is_risky_asset"]
+                 for item in payload["accounts"][0]["holdings"]}
+        self.assertIsNone(flags["합성 B"])
+        self.assertFalse(payload["accounts"][0]["risky"]["decidable"])
+
+    def test_the_boundary_rides_along_on_every_response(self):
+        from app import brief
+
+        self.stocked()
+        self.assertEqual(brief.BOUNDARY,
+                         portfolio.for_agent(date(2026, 8, 30))["boundary"])
+
+    def test_no_agent_tool_writes(self):
+        import anyio
+        from app import mcp_server
+
+        names = {tool.name for tool in anyio.run(mcp_server.mcp.list_tools)}
+        self.assertIn("market_portfolio", names)
+        for banned in ("market_portfolio_add", "market_portfolio_import",
+                       "market_add_account", "market_portfolio_write"):
+            self.assertNotIn(banned, names)
+
+    def test_the_empty_case_says_so_rather_than_returning_nothing(self):
+        payload = portfolio.for_agent(date(2026, 8, 30))
+        self.assertTrue(payload["empty"])
+        self.assertEqual([], payload["accounts"])
+
+
 class WriteGateTests(TemporaryDatabaseTest):
     """A browser will POST to localhost for any page the owner is visiting."""
 
